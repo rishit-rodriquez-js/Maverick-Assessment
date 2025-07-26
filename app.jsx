@@ -18,7 +18,7 @@ const FirebaseProvider = ({ children }) => {
     // --- Firebase Configuration (YOUR ACTUAL CONFIG) ---
     // Make sure these values are correct from your Firebase Project Settings -> Your Apps (Web app)
     const localFirebaseConfig = {
-        apiKey: "AIzaSyCkeJrNLrv4u1et8kqiYqwhVVUaW5ZPQ8I", // Replace with your actual API key
+        apiKey: "YOUR_APIKEY", // Replace with your actual API key
         authDomain: "maverick-assessment.firebaseapp.com", // Replace with your actual auth domain
         projectId: "maverick-assessment", // Replace with your actual project ID
         storageBucket: "maverick-assessment.firebasestorage.app", // Replace with your actual storage bucket
