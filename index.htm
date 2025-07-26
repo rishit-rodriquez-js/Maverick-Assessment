@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Maverick Assessment App</title>
+
+    <!-- IMPORTANT: Tailwind CSS CDN - This MUST be in the <head> section -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- IMPORTANT: Inter font - This MUST be in the <head> section -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- CRITICAL: Global styles to ensure html, body, and #root take full height and prevent unwanted scrollbars -->
+    <style>
+      html, body, #root {
+        height: 100%; /* Make them take 100% of their parent's height */
+        margin: 0;    /* Remove default browser margins */
+        padding: 0;   /* Remove default browser padding */
+        /* We will manage overflow on specific components if needed, not globally here */
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
