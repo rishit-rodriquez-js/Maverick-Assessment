@@ -1,11 +1,12 @@
-import React, { useState, useEffect, createContext, useContext, useRef, useMemo } from 'react'; // Added useMemo
+import React, { useState, useEffect, createContext, useContext, useRef, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, getDoc } from 'firebase/firestore'; // Removed getDocs
-import Chart from 'chart.js/auto'; // Import Chart.js
-import { Home, User, Target, Brain, Award, Users, LogOut, Edit, BarChart, BookOpen, MessageSquare, Briefcase, UploadCloud, Code, Play, CheckCircle, XCircle, Settings, Search, FileText } from 'lucide-react'; // Reverted to import for better compatibility
+import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, getDoc } from 'firebase/firestore';
+import Chart from 'chart.js/auto';
+import { Home, User, Target, Brain, Award, Users, LogOut, Edit, BarChart, BookOpen, MessageSquare, Briefcase, UploadCloud, Code, Play, CheckCircle, XCircle, Settings, Search, FileText, FileText as FileTextIcon } from 'lucide-react'; // Renamed FileText to FileTextIcon to avoid conflict
 
 // --- Firebase Context ---
+// Provides Firebase app, db, auth instances, userId, and auth readiness status to all components.
 const FirebaseContext = createContext(null);
 
 const FirebaseProvider = ({ children }) => {
@@ -14,23 +15,21 @@ const FirebaseProvider = ({ children }) => {
     const [auth, setAuth] = useState(null);
     const [userId, setUserId] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
-    const [geminiApiKey, setGeminiApiKey] = useState("AIzaSyDoTy24lAZVPkcN-B5JTz8xh4shI0MwgdB4"); // State for Gemini API Key
+    const [geminiApiKey] = useState("AIzaSyA-4-3FTYo7yicpgD6aVhg1smciwNGnFgk"); // State for Gemini API Key - REPLACE WITH YOUR ACTUAL KEY
 
-    // --- Firebase Configuration (YOUR ACTUAL CONFIG) ---
-    // Wrapped localFirebaseConfig in useMemo to stabilize it for useEffect dependencies
+    // Firebase Configuration - wrapped in useMemo for stability.
+    // IMPORTANT: Replace with your actual Firebase project configuration.
     const localFirebaseConfig = useMemo(() => ({
-        apiKey: "AIzaSyCkeJrNLrv4u1et8kqiYqwhVVUaW5ZPQ8I", // Firebase API Key
-        authDomain: "maverick-assessment.firebaseapp.com", // Replace with your actual auth domain
-        projectId: "maverick-assessment", // Replace with your actual project ID
-        storageBucket: "maverick-assessment.firebasestorage.app", // Replace with your actual storage bucket
-        messagingSenderId: "125120689173", // Replace with your actual messaging sender ID
-        appId: "1:125120689173:web:0a4599f860f19d36908a1c" // Replace with your actual app ID
-    }), []); // Empty dependency array means it's created once
-
-    // --- END OF Firebase Configuration ---
+        apiKey: "AIzaSyCkeJrNLrv4u1et8kqiYqwhVVUaW5ZPQ8I",
+        authDomain: "maverick-assessment.firebaseapp.com",
+        projectId: "maverick-assessment",
+        storageBucket: "maverick-assessment.firebasestorage.app",
+        messagingSenderId: "125120689173",
+        appId: "1:125120689173:web:0a4599f860f19d36908a1c"
+    }), []);
 
     useEffect(() => {
-        // Initialize Firebase only once
+        // Initialize Firebase only once when the component mounts.
         if (!app) {
             try {
                 const initializedApp = initializeApp(localFirebaseConfig);
@@ -41,35 +40,35 @@ const FirebaseProvider = ({ children }) => {
                 setDb(firestoreDb);
                 setAuth(firebaseAuth);
 
-                // Listen for auth state changes
+                // Listen for authentication state changes to manage user sessions.
                 const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
                     if (user) {
                         setUserId(user.uid);
                     } else {
+                        // If no user is signed in, attempt anonymous sign-in.
                         try {
                             await signInAnonymously(firebaseAuth);
                             const currentUserId = firebaseAuth.currentUser?.uid || crypto.randomUUID();
                             setUserId(currentUserId);
                         } catch (error) {
                             console.error("Error during anonymous sign-in:", error);
-                            setUserId(crypto.randomUUID()); // Fallback if anonymous fails
+                            setUserId(crypto.randomUUID()); // Fallback if anonymous sign-in fails.
                         }
                     }
-                    setIsAuthReady(true);
+                    setIsAuthReady(true); // Mark Firebase authentication as ready.
                 });
 
-                return () => unsubscribe(); // Cleanup auth listener
+                return () => unsubscribe(); // Cleanup the auth listener on component unmount.
             } catch (error) {
                 console.error("Failed to initialize Firebase:", error);
             }
         }
-    }, [app, localFirebaseConfig]); // localFirebaseConfig is now stable due to useMemo
+    }, [app, localFirebaseConfig]); // Dependencies ensure effect runs only when necessary.
 
-    // This appId now correctly references localFirebaseConfig.appId
-    const appId = localFirebaseConfig.appId;
+    const appId = localFirebaseConfig.appId; // Get appId from the stable config.
 
     return (
-        <FirebaseContext.Provider value={{ app, db, auth, userId, isAuthReady, appId, localFirebaseConfig, geminiApiKey }}> {/* Added geminiApiKey to context */}
+        <FirebaseContext.Provider value={{ app, db, auth, userId, isAuthReady, appId, localFirebaseConfig, geminiApiKey }}>
             {children}
         </FirebaseContext.Provider>
     );
@@ -77,24 +76,28 @@ const FirebaseProvider = ({ children }) => {
 
 // --- Reusable Components ---
 
-// Input field component
-function Input({ label, type = 'text', value, onChange, placeholder, className = '' }) {
+// Input field component for text and textarea.
+function Input({ label, type = 'text', value, onChange, placeholder, className = '', onKeyPress }) {
+    const InputElement = type === 'textarea' ? 'textarea' : 'input';
     return (
         <div className="mb-4">
             <label className="block text-gray-300 text-sm font-bold mb-2">{label}</label>
-            <input
-                type={type}
+            <InputElement
+                type={type === 'textarea' ? undefined : type} // Type prop not for textarea
                 value={value}
                 onChange={onChange}
                 placeholder={placeholder}
+                rows={type === 'textarea' ? 4 : undefined} // Rows for textarea
+                onKeyPress={onKeyPress} // Pass onKeyPress prop
                 className={`shadow-inner appearance-none border rounded-lg w-full py-2 px-3 text-gray-100 leading-tight focus:outline-none focus:shadow-outline
                             bg-gray-700 border-gray-600 placeholder-gray-400
-                            focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200 ease-in-out ${className}`} />
+                            focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200 ease-in-out ${className}`}
+            />
         </div>
     );
 }
 
-// Button component
+// Button component with consistent styling and optional icon.
 const Button = ({ onClick, children, className = '', disabled = false, icon: Icon = null }) => (
     <button
         onClick={onClick}
@@ -111,7 +114,7 @@ const Button = ({ onClick, children, className = '', disabled = false, icon: Ico
     </button>
 );
 
-// Progress Bar component
+// Progress Bar component for visualizing progress.
 const ProgressBar = ({ label, progress }) => (
     <div className="mb-4">
         <div className="flex justify-between mb-1">
@@ -127,7 +130,7 @@ const ProgressBar = ({ label, progress }) => (
     </div>
 );
 
-// Message Box Component (for alerts/confirmations)
+// Message Box Component for displaying alerts or confirmations.
 const MessageBox = ({ message, onConfirm, onCancel, showCancel = false }) => {
     if (!message) return null;
     return (
@@ -145,7 +148,7 @@ const MessageBox = ({ message, onConfirm, onCancel, showCancel = false }) => {
     );
 };
 
-// Workflow Progress Bar Component
+// Workflow Progress Bar Component to show overall learning journey progress.
 const WorkflowProgressBar = ({ currentStage }) => {
     const stages = [
         { name: 'Profile Loaded', value: 0 },
@@ -188,9 +191,9 @@ const WorkflowProgressBar = ({ currentStage }) => {
 
 // --- App Pages/Components ---
 
-// Authentication Component
+// Authentication Component: Handles user login and registration.
 const Auth = ({ setCurrentPage }) => {
-    const { auth, db, userId, isAuthReady, appId } = useContext(FirebaseContext);
+    const { auth, db, isAuthReady, appId } = useContext(FirebaseContext);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isRegister, setIsRegister] = useState(false);
@@ -206,23 +209,25 @@ const Auth = ({ setCurrentPage }) => {
             let userCredential;
             if (isRegister) {
                 userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                // Create user profile in Firestore
+                // Create user profile in Firestore upon registration.
                 const userRef = doc(db, `artifacts/${appId}/users/${userCredential.user.uid}/profile`, 'data');
                 await setDoc(userRef, {
                     email: userCredential.user.email,
-                    skills: [],
+                    skills: [], // Initial empty skills array (now array of objects)
                     targetRole: '',
                     points: 0,
                     badges: [],
-                    userId: userCredential.user.uid, // Store userId in the document
-                    workflowProgress: 'Profile Loaded' // Initial workflow stage
+                    userId: userCredential.user.uid,
+                    workflowProgress: 'Profile Loaded', // Initial workflow stage.
+                    completedModules: [], // Initialize completed modules.
+                    inferredSkillVectors: {} // Placeholder for advanced skill vectors.
                 });
                 setMessage("Registration successful! Please log in.");
-                setIsRegister(false); // Switch to login after registration
+                setIsRegister(false); // Switch to login after successful registration.
             } else {
                 userCredential = await signInWithEmailAndPassword(auth, email, password);
                 setMessage("Login successful!");
-                setCurrentPage('dashboard');
+                setCurrentPage('dashboard'); // Navigate to dashboard after successful login.
             }
         } catch (error) {
             console.error("Auth error:", error);
@@ -233,6 +238,7 @@ const Auth = ({ setCurrentPage }) => {
     return (
         <div className="flex items-center justify-center min-h-screen w-full bg-gray-950 p-4 font-inter">
             <div className="flex flex-col lg:flex-row bg-gray-800 rounded-3xl shadow-2xl w-full h-full border border-gray-700 overflow-hidden">
+                {/* Left Section: Value Proposition */}
                 <div className="lg:w-1/2 p-10 flex flex-col justify-center items-center text-center lg:text-left bg-gradient-to-br from-blue-700 to-purple-800 text-white">
                     <div className="max-w-md mx-auto">
                         <h1 className="text-5xl font-extrabold mb-6 leading-tight">
@@ -262,6 +268,7 @@ const Auth = ({ setCurrentPage }) => {
                     </div>
                 </div>
 
+                {/* Right Section: Login/Register Form */}
                 <div className="lg:w-1/2 p-10 flex flex-col justify-center bg-gray-800">
                     <h2 className="text-4xl font-extrabold mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
                         {isRegister ? 'Join Maverick' : 'Welcome Back!'}
@@ -301,16 +308,21 @@ const Auth = ({ setCurrentPage }) => {
     );
 };
 
-// Profile Setup Component
+// Profile Setup Component: Allows users to define their skills and target role.
 const ProfileSetup = ({ setCurrentPage }) => {
-    const { db, userId, isAuthReady, appId } = useContext(FirebaseContext);
-    const [userSkills, setUserSkills] = useState('');
+    const { db, userId, isAuthReady, appId, geminiApiKey } = useContext(FirebaseContext);
+    const [userSkills, setUserSkills] = useState([]); // Now stores array of { name: string, level: number }
     const [targetRole, setTargetRole] = useState('');
+    const [resumeFile, setResumeFile] = useState(null); // State for resume PDF file.
     const [message, setMessage] = useState('');
     const [loading, setLoading] = useState(true);
+    const [suggestedRoles, setSuggestedRoles] = useState([]);
+    const [selectedSuggestedRole, setSelectedSuggestedRole] = useState('');
+    const [customSkillInput, setCustomSkillInput] = useState(''); // State for new custom skill input.
+
 
     useEffect(() => {
-        // Fetch user profile data when component mounts or userId changes
+        // Fetch user profile data when component mounts or userId changes.
         const fetchUserProfile = async () => {
             if (isAuthReady && userId && db) {
                 setLoading(true);
@@ -319,7 +331,8 @@ const ProfileSetup = ({ setCurrentPage }) => {
                     const docSnap = await getDoc(userRef);
                     if (docSnap.exists()) {
                         const data = docSnap.data();
-                        setUserSkills(data.skills ? data.skills.join(', ') : '');
+                        // Initialize userSkills with existing data, ensuring it's an array of objects.
+                        setUserSkills(data.skills || []);
                         setTargetRole(data.targetRole || '');
                     }
                 } catch (error) {
@@ -329,14 +342,164 @@ const ProfileSetup = ({ setCurrentPage }) => {
                     setLoading(false);
                 }
             } else if (isAuthReady && !userId) {
-                // If auth is ready but no userId (e.g., failed anonymous sign-in), redirect to auth
-                setCurrentPage('auth');
+                setCurrentPage('auth'); // Redirect if not authenticated.
             }
         };
 
         fetchUserProfile();
     }, [userId, isAuthReady, db, appId, setCurrentPage]);
 
+    // Handles AI suggestion for job roles based on user's current skills.
+    const handleGetRoleSuggestions = async () => {
+        setLoading(true);
+        setMessage('');
+        setSuggestedRoles([]);
+
+        const skillsString = userSkills.map(s => s.name).join(', ');
+        if (!skillsString.trim()) {
+            setMessage("Please enter some skills or extract from resume to get role suggestions.");
+            setLoading(false);
+            return;
+        }
+
+        const promptText = `Based on these skills: "${skillsString}", suggest 3-5 relevant job roles and the key skills required for each role, along with a brief description for each role. Provide the output as a JSON array of objects, where each object has 'roleName' (string), 'description' (string), and 'requiredSkills' (an array of strings).`;
+
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: promptText }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "ARRAY",
+                        items: {
+                            type: "OBJECT",
+                            properties: {
+                                roleName: { type: "STRING" },
+                                description: { type: "STRING" },
+                                requiredSkills: { type: "ARRAY", items: { type: "STRING" } }
+                            },
+                            required: ["roleName", "description", "requiredSkills"]
+                        }
+                    }
+                }
+            };
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}. Response: ${errorBody}`);
+            }
+
+            const result = await response.json();
+            let jsonResponse;
+            try {
+                jsonResponse = JSON.parse(result.candidates[0].content.parts[0].text);
+            } catch (parseError) {
+                console.error("Error parsing JSON response from Gemini API for suggestions:", parseError);
+                setMessage("Failed to parse role suggestions from AI. Please try again.");
+                return;
+            }
+
+            if (jsonResponse && jsonResponse.length > 0) {
+                setSuggestedRoles(jsonResponse);
+                setMessage("AI suggestions loaded!");
+            } else {
+                setMessage("AI could not generate role suggestions based on your skills.");
+            }
+
+        } catch (error) {
+            console.error("Error getting AI suggestions:", error);
+            setMessage(`Failed to get AI suggestions: ${error.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Handles AI extraction of skills from the uploaded resume PDF via backend.
+    const handleExtractSkillsFromResume = async () => {
+        setLoading(true);
+        setMessage('');
+
+        if (!resumeFile) {
+            setMessage("Please upload a resume PDF file first.");
+            setLoading(false);
+            return;
+        }
+
+        // Create FormData to send the file.
+        const formData = new FormData();
+        formData.append('resume', resumeFile);
+
+        try {
+            // IMPORTANT: Replace with the actual URL of your backend endpoint.
+            // For local development, it might be something like 'http://localhost:5000/extract-skills'
+            const backendUrl = 'http://localhost:5000/extract-skills'; 
+            
+            setMessage("Uploading resume and extracting skills via backend...");
+            const response = await fetch(backendUrl, {
+                method: 'POST',
+                body: formData, // FormData automatically sets 'Content-Type': 'multipart/form-data'
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`Backend error! Status: ${response.status}. Response: ${errorBody}`);
+            }
+
+            const result = await response.json();
+            if (result.skills && result.skills.length > 0) {
+                // Merge extracted skills with existing skills, avoiding duplicates and setting default level 0.
+                const currentSkillNames = new Set(userSkills.map(s => s.name.toLowerCase()));
+                const newSkills = result.skills
+                    .filter(skillName => !currentSkillNames.has(skillName.toLowerCase()))
+                    .map(skillName => ({ name: skillName, level: 0 }));
+
+                const combinedSkills = [...userSkills, ...newSkills];
+                setUserSkills(combinedSkills);
+                setMessage("Skills extracted from resume successfully!");
+            } else {
+                setMessage("Backend extracted no skills from your resume.");
+            }
+        } catch (error) {
+            console.error("Error extracting skills via backend:", error);
+            setMessage(`Failed to extract skills: ${error.message}. Ensure your backend server is running.`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Updates the level of a specific skill.
+    const handleSkillLevelChange = (skillName, level) => {
+        setUserSkills(prevSkills =>
+            prevSkills.map(s =>
+                s.name === skillName ? { ...s, level: parseInt(level, 10) } : s
+            )
+        );
+    };
+
+    // Adds a new custom skill to the list for rating.
+    const handleAddCustomSkill = () => {
+        if (customSkillInput.trim() && !userSkills.some(s => s.name.toLowerCase() === customSkillInput.toLowerCase())) {
+            const newSkill = { name: customSkillInput.trim(), level: 0 };
+            setUserSkills(prevSkills => [...prevSkills, newSkill]);
+            setCustomSkillInput(''); // Clear input field after adding.
+        } else if (userSkills.some(s => s.name.toLowerCase() === customSkillInput.toLowerCase())) {
+            setMessage("Skill already exists!");
+        }
+    };
+
+    // Removes a skill from the list.
+    const handleRemoveSkill = (skillName) => {
+        setUserSkills(prevSkills => prevSkills.filter(s => s.name !== skillName));
+    };
+
+    // Saves the user's profile, including the new skill structure.
     const handleSaveProfile = async () => {
         if (!isAuthReady || !userId || !db) {
             setMessage("Firebase not ready. Please wait.");
@@ -344,15 +507,38 @@ const ProfileSetup = ({ setCurrentPage }) => {
         }
         setLoading(true);
         try {
-            const skillsArray = userSkills.split(',').map(s => s.trim()).filter(s => s !== '');
+            let finalTargetRole = targetRole;
+            let finalSkills = [...userSkills]; // Start with current user-rated skills
+
+            if (selectedSuggestedRole) {
+                const chosenRole = suggestedRoles.find(role => role.roleName === selectedSuggestedRole);
+                if (chosenRole) {
+                    finalTargetRole = chosenRole.roleName;
+                    // Merge suggested required skills into finalSkills, setting default level 0 if new.
+                    const currentSkillNames = new Set(finalSkills.map(s => s.name.toLowerCase()));
+                    chosenRole.requiredSkills.forEach(reqSkill => {
+                        if (!currentSkillNames.has(reqSkill.toLowerCase())) {
+                            finalSkills.push({ name: reqSkill, level: 0 }); // Add new required skills at level 0
+                        }
+                    });
+                }
+            }
+
             const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
             await setDoc(userRef, {
-                skills: skillsArray,
-                targetRole: targetRole,
-                workflowProgress: 'Assessment Pending' // Update workflow stage here
-            }, { merge: true }); // Use merge to update existing fields without overwriting others
+                skills: finalSkills, // Save skills as array of objects.
+                targetRole: finalTargetRole,
+                workflowProgress: 'Assessment Pending', // Update workflow stage.
+                // Placeholder for inferred data from a real backend "Profile Agent".
+                // In a real scenario, a backend would process resume/HR data
+                // and compute these vectors.
+                inferredSkillVectors: userSkills.reduce((acc, skill) => {
+                    acc[skill.name] = skill.level / 5; // Simple normalization for visualization
+                    return acc;
+                }, {})
+            }, { merge: true }); // Use merge to update existing fields without overwriting others.
             setMessage("Profile saved successfully!");
-            setCurrentPage('dashboard'); // Navigate to dashboard after saving
+            setCurrentPage('dashboard'); // Navigate to dashboard after saving.
         } catch (error) {
             console.error("Error saving profile:", error);
             setMessage("Error saving profile.");
@@ -371,20 +557,122 @@ const ProfileSetup = ({ setCurrentPage }) => {
                 <h2 className="text-4xl font-extrabold mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-teal-500 animate-pulse">
                     Setup Your Profile
                 </h2>
+
+                {/* Resume Upload Section (Now sends to Backend) */}
+                <h3 className="text-xl font-bold mb-4 text-gray-300">Upload Resume (PDF) & Extract Skills</h3>
+                <div className="mb-4">
+                    <label className="block text-gray-300 text-sm font-bold mb-2">Upload Your Resume (PDF)</label>
+                    <input
+                        type="file"
+                        accept=".pdf"
+                        onChange={(e) => setResumeFile(e.target.files[0])}
+                        className="block w-full text-sm text-gray-300
+                            file:mr-4 file:py-2 file:px-4
+                            file:rounded-full file:border-0
+                            file:text-sm file:font-semibold
+                            file:bg-blue-50 file:text-blue-700
+                            hover:file:bg-blue-100"
+                    />
+                    {resumeFile && <p className="text-gray-400 text-xs mt-2">Selected: {resumeFile.name}</p>}
+                </div>
+                {/* Removed "Describe your resume content" textarea */}
+                <Button onClick={handleExtractSkillsFromResume} className="w-full mb-6 text-xl" disabled={loading || !resumeFile} icon={UploadCloud}>
+                    {loading ? 'Extracting Skills...' : 'Extract Skills from Resume (AI)'}
+                </Button>
+
+                {/* Dynamic Skill Rating Section */}
+                <h3 className="text-xl font-bold mb-4 text-gray-300">Rate Your Skills (0-5)</h3>
+                {userSkills.length === 0 && (
+                    <p className="text-gray-400 text-sm mb-4">No skills to rate yet. Extract from resume or add manually below.</p>
+                )}
+                <div className="space-y-4 mb-6 max-h-60 overflow-y-auto p-2 rounded-lg bg-gray-700 border border-gray-600">
+                    {userSkills.map((skill, _index) => ( // Corrected JSX syntax here
+                        <div key={skill.name} className="flex items-center justify-between bg-gray-600 p-3 rounded-lg shadow-inner">
+                            <span className="text-gray-100 font-medium text-lg">{skill.name}</span>
+                            <div className="flex items-center gap-2">
+                                <select
+                                    value={skill.level}
+                                    onChange={(e) => handleSkillLevelChange(skill.name, e.target.value)}
+                                    className="bg-gray-800 text-gray-100 border border-gray-500 rounded-md py-1 px-2 text-sm focus:ring-blue-500 focus:border-blue-500"
+                                >
+                                    {[0, 1, 2, 3, 4, 5].map(level => (
+                                        <option key={level} value={level}>{level}</option>
+                                    ))}
+                                </select>
+                                <button onClick={() => handleRemoveSkill(skill.name)} className="text-red-400 hover:text-red-500 transition">
+                                    <XCircle size={20} />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                {/* Custom Skill Input */}
+                <div className="flex gap-2 mb-6">
+                    <Input
+                        placeholder="Add custom skill"
+                        className="flex-grow"
+                        value={customSkillInput}
+                        onChange={(e) => setCustomSkillInput(e.target.value)}
+                        onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                                handleAddCustomSkill();
+                            }
+                        }}
+                    />
+                    <Button onClick={handleAddCustomSkill} className="flex-shrink-0">Add</Button>
+                </div>
+
+
+                <Button onClick={handleGetRoleSuggestions} className="w-full mb-6 text-xl" disabled={loading} icon={Brain}>
+                    {loading ? 'Getting Suggestions...' : 'Get AI Role Suggestions'}
+                </Button>
+
+                {suggestedRoles.length > 0 && (
+                    <div className="mb-6">
+                        <label className="block text-gray-300 text-sm font-bold mb-2">Suggested Target Roles</label>
+                        <select
+                            value={selectedSuggestedRole}
+                            onChange={(e) => {
+                                setSelectedSuggestedRole(e.target.value);
+                                setTargetRole(e.target.value); // Also set the targetRole input
+                                const chosenRole = suggestedRoles.find(role => role.roleName === selectedSuggestedRole);
+                                if (chosenRole) {
+                                    // Merge suggested required skills with current user skills, setting default level 0.
+                                    const currentSkillNames = new Set(userSkills.map(s => s.name.toLowerCase()));
+                                    const newSkillsFromSuggestion = chosenRole.requiredSkills
+                                        .filter(reqSkill => !currentSkillNames.has(reqSkill.toLowerCase()))
+                                        .map(reqSkill => ({ name: reqSkill, level: 0 }));
+                                    
+                                    const combinedSkills = [...userSkills, ...newSkillsFromSuggestion];
+                                    setUserSkills(combinedSkills);
+                                }
+                            }}
+                            className="shadow-inner appearance-none border rounded-lg w-full py-3 px-4 text-gray-100 leading-tight focus:outline-none focus:shadow-outline
+                                       bg-gray-700 border-gray-600 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition duration-200 ease-in-out text-lg"
+                        >
+                            <option value="">Select a suggested role</option>
+                            {suggestedRoles.map((role, index) => (
+                                <option key={index} value={role.roleName}>{role.roleName}</option>
+                            ))}
+                        </select>
+                        {selectedSuggestedRole && (
+                            <div className="mt-4 p-4 bg-gray-700 border border-gray-600 rounded-lg text-gray-300">
+                                <h5 className="font-semibold text-blue-400 mb-2">{selectedSuggestedRole}</h5>
+                                <p className="text-sm mb-2">{suggestedRoles.find(r => r.roleName === selectedSuggestedRole)?.description}</p>
+                                <p className="text-sm">Required Skills: <span className="font-medium">{suggestedRoles.find(r => r.roleName === selectedSuggestedRole)?.requiredSkills.join(', ')}</span></p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 <Input
-                    label="Your Known Skills (comma-separated)"
-                    value={userSkills}
-                    onChange={(e) => setUserSkills(e.target.value)}
-                    placeholder="e.g., JavaScript, React, HTML, CSS"
-                    className="mb-6"
-                />
-                <Input
-                    label="Target Role"
+                    label="Target Role (or select from suggestions)"
                     value={targetRole}
                     onChange={(e) => setTargetRole(e.target.value)}
                     placeholder="e.g., Frontend Developer, Data Scientist"
                     className="mb-8"
                 />
+
                 <Button onClick={handleSaveProfile} className="w-full text-xl" icon={Briefcase}>Save Profile</Button>
                 <MessageBox message={message} onConfirm={() => setMessage('')} />
             </div>
@@ -392,7 +680,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
     );
 };
 
-// Mock Role Benchmarks
+// Mock Role Benchmarks: Defines required proficiency levels for various roles.
 const roleBenchmarks = {
     'Frontend Developer': {
         'HTML': 5, 'CSS': 5, 'JavaScript': 5, 'React': 4, 'Tailwind CSS': 3, 'Node.js': 2, 'Databases': 1
@@ -406,7 +694,7 @@ const roleBenchmarks = {
     // Add more roles and their required skills/proficiency levels (1-5)
 };
 
-// Skill Gap Analysis Component
+// Skill Gap Analysis Component: Visualizes skill gaps using Chart.js.
 const SkillGapAnalysis = ({ userSkills, targetRole }) => {
     const [skillGaps, setSkillGaps] = useState([]);
     const chartRef = useRef(null);
@@ -421,12 +709,13 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
         const requiredSkills = roleBenchmarks[targetRole];
         const gaps = [];
 
-        // Convert userSkills array to a map for easier lookup
-        const userSkillsMap = new Map(userSkills.map(skill => [skill.toLowerCase(), 5])); // Assume user has max proficiency in stated skills
+        // Convert userSkills array of objects to a map for easier lookup.
+        const userSkillsMap = new Map(userSkills.map(skill => [skill.name.toLowerCase(), skill.level]));
 
         for (const skill in requiredSkills) {
             const requiredProficiency = requiredSkills[skill];
-            const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? 5 : 0; // If user has skill, assume max, else 0
+            // Use the actual user's rated proficiency, default to 0 if skill not rated.
+            const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? userSkillsMap.get(skill.toLowerCase()) : 0;
 
             // Calculate gap: (required - user_proficiency) / required * 100
             const gapPercentage = Math.max(0, ((requiredProficiency - userProficiency) / requiredProficiency) * 100);
@@ -442,7 +731,7 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
     }, [userSkills, targetRole]);
 
     useEffect(() => {
-        // Destroy existing chart before creating a new one
+        // Destroy existing chart before creating a new one to prevent rendering issues.
         if (chartInstanceRef.current) {
             chartInstanceRef.current.destroy();
         }
@@ -476,32 +765,32 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
                     scales: {
                         y: {
                             beginAtZero: true,
-                            max: 5, // Max proficiency level
+                            max: 5, // Max proficiency level.
                             title: {
                                 display: true,
-                                text: 'Proficiency Level (1-5)',
-                                color: '#E0E0E0' // Light gray for text
+                                text: 'Proficiency Level (0-5)',
+                                color: '#E0E0E0'
                             },
                             ticks: {
-                                color: '#B0B0B0' // Lighter gray for ticks
+                                color: '#B0B0B0'
                             },
                             grid: {
-                                color: '#444' // Darker grid lines
+                                color: '#444'
                             }
                         },
                         x: {
                             ticks: {
-                                color: '#B0B0B0' // Lighter gray for ticks
+                                color: '#B0B0B0'
                             },
                             grid: {
-                                color: '#444' // Darker grid lines
+                                color: '#444'
                             }
                         }
                     },
                     plugins: {
                         legend: {
                             labels: {
-                                color: '#E0E0E0' // Light gray for legend labels
+                                color: '#E0E0E0'
                             }
                         },
                         tooltip: {
@@ -520,27 +809,27 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
                         }
                     },
                     animation: {
-                        duration: 1000, // Animation duration in milliseconds
-                        easing: 'easeOutQuart' // Easing function
+                        duration: 1000,
+                        easing: 'easeOutQuart'
                     }
                 },
             });
         }
-    }, [userSkills, targetRole]);
+    }, [skillGaps, userSkills, targetRole]);
 
     return (
-        <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl mb-8 border border-gray-700 transform hover:scale-105 transition-transform duration-300"> {/* Enhanced card styling */}
+        <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl mb-8 border border-gray-700 transform hover:scale-105 transition-transform duration-300">
             <h3 className="text-3xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-red-500">Skill Gap Analysis for {targetRole}</h3>
             {skillGaps.length === 0 ? (
                 <p className="text-gray-400 text-lg text-center py-4">Please set your skills and target role in your profile to see skill gaps.</p>
             ) : (
                 <>
-                    <div className="h-72 mb-6"> {/* Increased height for the chart */}
+                    <div className="h-72 mb-6">
                         <canvas ref={chartRef}></canvas>
                     </div>
                     <h4 className="text-xl font-medium mb-4 text-gray-300">Detailed Gaps:</h4>
-                    {skillGaps.map((gap, index) => (
-                        <ProgressBar key={index} label={`${gap.skill} Gap`} progress={Math.round(gap.gap)} />
+                    {skillGaps.map((gap, _index) => (
+                        <ProgressBar key={_index} label={`${gap.skill} Gap`} progress={Math.round(gap.gap)} />
                     ))}
                 </>
             )}
@@ -548,53 +837,165 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
     );
 };
 
-// Learning Recommendations Component
-const LearningRecommendations = ({ skillGaps, onCompleteModule, completedModules }) => {
-    const recommendedModules = skillGaps
-        .filter(gap => gap.gap > 0) // Only recommend for skills with a gap
-        .sort((a, b) => b.gap - a.gap) // Sort by largest gap first
-        .map(gap => ({
-            skill: gap.skill,
-            moduleName: `${gap.skill} Fundamentals`,
-            description: `Learn the core concepts and practices of ${gap.skill}.`,
-            points: 50, // Points awarded for completing this module
-            estimatedTime: `${Math.floor(Math.random() * 3) + 1} hours`, // Mock estimated time
-            status: completedModules.includes(`${gap.skill} Fundamentals`) ? 'Done' : 'Not Started' // Initial status
-        }));
+// Learning Platform Component: Displays recommended and completed learning modules.
+const LearningPlatform = ({ userSkills, targetRole, completedModules, showCompletedOnly = false }) => {
+    const { db, userId, appId } = useContext(FirebaseContext); // Removed geminiApiKey
+    const [message, setMessage] = useState('');
+    const [viewMode, setViewMode] = useState(showCompletedOnly ? 'completed' : 'recommended'); // 'recommended' or 'completed'
+
+    const recommendedModules = useMemo(() => {
+        if (!userSkills || !targetRole || !roleBenchmarks[targetRole]) {
+            return [];
+        }
+
+        const requiredSkills = roleBenchmarks[targetRole];
+        const gaps = [];
+
+        // Calculate skill gaps based on user's rated proficiency.
+        const userSkillsMap = new Map(userSkills.map(skill => [skill.name.toLowerCase(), skill.level]));
+        for (const skill in requiredSkills) {
+            const requiredProficiency = requiredSkills[skill];
+            const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? userSkillsMap.get(skill.toLowerCase()) : 0;
+            const gapPercentage = Math.max(0, ((requiredProficiency - userProficiency) / requiredProficiency) * 100);
+            if (gapPercentage > 0) {
+                gaps.push({ skill: skill, gap: gapPercentage });
+            }
+        }
+
+        // Sort by largest gap first and map to module format.
+        return gaps
+            .sort((a, b) => b.gap - a.gap)
+            .map(gap => ({
+                skill: gap.skill,
+                moduleName: `${gap.skill} Fundamentals`,
+                description: `Learn the core concepts and practices of ${gap.skill}.`,
+                points: 50,
+                estimatedTime: `${Math.floor(Math.random() * 3) + 1} hours`,
+                status: completedModules.includes(`${gap.skill} Fundamentals`) ? 'Done' : 'Not Started'
+            }));
+    }, [userSkills, targetRole, completedModules]);
+
+    // Generates mock completed modules for demonstration if none exist.
+    const mockCompletedModules = useMemo(() => {
+        // Filter recommended modules to show only those marked as completed.
+        const actualCompleted = recommendedModules.filter(module => completedModules.includes(module.moduleName));
+        
+        // If there are no actual completed modules, provide a static mock for display.
+        if (actualCompleted.length === 0 && showCompletedOnly) {
+            return [
+                { skill: 'HTML', moduleName: 'HTML Basics', description: 'Fundamental web structuring.', points: 50, estimatedTime: '2 hours', status: 'Done' },
+                { skill: 'CSS', moduleName: 'Advanced CSS', description: 'Deep dive into modern CSS.', points: 50, estimatedTime: '3 hours', status: 'Done' },
+            ].filter(module => completedModules.includes(module.moduleName)); // Still filter by actual completed, but provide mock if empty.
+        }
+        return actualCompleted;
+    }, [completedModules, recommendedModules, showCompletedOnly]);
+
+
+    // Handles marking a module as complete and updating user points/workflow.
+    const handleMarkComplete = async (pointsAwarded, moduleName) => {
+        if (!userId || !db) {
+            setMessage("Cannot update points. User not authenticated or Firestore not ready.");
+            return;
+        }
+        try {
+            const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
+            const docSnap = await getDoc(userRef);
+            if (docSnap.exists()) {
+                const currentData = docSnap.data();
+                const newPoints = (currentData.points || 0) + pointsAwarded;
+                const updatedCompletedModules = [...(currentData.completedModules || []), moduleName];
+
+                await updateDoc(userRef, {
+                    points: newPoints,
+                    completedModules: updatedCompletedModules,
+                    workflowProgress: 'Learning In Progress' // Update workflow stage.
+                });
+                setMessage(`Module "${moduleName}" completed! You earned ${pointsAwarded} points.`);
+            }
+        } catch (error) {
+            console.error("Error updating points:", error);
+            setMessage("Failed to update points.");
+        }
+    };
 
     return (
-        <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl mb-8 border border-gray-700 transform hover:scale-105 transition-transform duration-300"> {/* Enhanced card styling */}
-            <h3 className="text-3xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500">Recommended Learning Modules</h3>
-            {recommendedModules.length === 0 ? (
-                <p className="text-gray-400 text-lg text-center py-4">Great! No significant skill gaps found for your target role, or please set your target role.</p>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"> {/* More columns on larger screens */}
-                    {recommendedModules.map((module, index) => (
-                        <div key={index} className="bg-gray-700 border border-gray-600 rounded-2xl p-6 flex flex-col justify-between shadow-xl transition duration-300 ease-in-out hover:scale-105"> {/* Enhanced module card */}
-                            <div>
-                                <h4 className="text-2xl font-semibold text-blue-400 mb-3">{module.moduleName}</h4>
-                                <p className="text-gray-300 text-md mb-3">{module.description}</p>
-                                <p className="text-gray-400 text-sm mb-2">Estimated Time: <span className="font-bold">{module.estimatedTime}</span></p>
-                                <p className="text-gray-400 text-sm">Status: <span className={`font-bold ${module.status === 'Done' ? 'text-green-400' : 'text-yellow-400'}`}>{module.status}</span></p>
-                                <p className="text-gray-400 text-sm">Points for completion: <span className="font-bold">{module.points}</span></p>
-                            </div>
-                            <Button
-                                onClick={() => onCompleteModule(module.points, module.moduleName)}
-                                className="mt-6 self-end text-md"
-                                icon={Award}
-                                disabled={module.status === 'Done'} // Disable if already done
-                            >
-                                {module.status === 'Done' ? 'Completed' : 'Mark as Complete'}
-                            </Button>
-                        </div>
-                    ))}
+        <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4 sm:p-6 md:p-8 font-inter text-gray-100">
+            <div className="max-w-6xl mx-auto bg-gray-800 p-8 rounded-3xl shadow-2xl mb-8 border border-gray-700 transform hover:scale-105 transition-transform duration-300">
+                <div className="flex justify-center gap-4 mb-6">
+                    <Button
+                        onClick={() => setViewMode('recommended')}
+                        className={`text-lg ${viewMode === 'recommended' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-700'}`}
+                    >
+                        Recommended Modules
+                    </Button>
+                    <Button
+                        onClick={() => setViewMode('completed')}
+                        className={`text-lg ${viewMode === 'completed' ? 'bg-blue-600' : 'bg-gray-600 hover:bg-gray-700'}`}
+                    >
+                        Completed Modules
+                    </Button>
                 </div>
-            )}
+
+                <h3 className="text-3xl font-extrabold mb-6 text-center text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-500">
+                    {viewMode === 'recommended' ? 'Recommended Learning Modules' : 'Your Completed Courses'}
+                </h3>
+
+                {viewMode === 'recommended' ? (
+                    recommendedModules.length === 0 ? (
+                        <p className="text-gray-400 text-lg text-center py-4">Great! No significant skill gaps found for your target role, or please set your target role.</p>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {recommendedModules.map((module, index) => (
+                                <div key={index} className="bg-gray-700 border border-gray-600 rounded-2xl p-6 flex flex-col justify-between shadow-xl transition duration-300 ease-in-out hover:scale-105">
+                                    <div>
+                                        <h4 className="text-2xl font-semibold text-blue-400 mb-3">{module.moduleName}</h4>
+                                        <p className="text-gray-300 text-md mb-3">{module.description}</p>
+                                        <p className="text-gray-400 text-sm mb-2">Estimated Time: <span className="font-bold">{module.estimatedTime}</span></p>
+                                        <p className="text-gray-400 text-sm">Status: <span className={`font-bold ${module.status === 'Done' ? 'text-green-400' : 'text-yellow-400'}`}>{module.status}</span></p>
+                                        <p className="text-gray-400 text-sm">Points for completion: <span className="font-bold">{module.points}</span></p>
+                                    </div>
+                                    <Button
+                                        onClick={() => handleMarkComplete(module.points, module.moduleName)}
+                                        className="mt-6 self-end text-md"
+                                        icon={Award}
+                                        disabled={module.status === 'Done'}
+                                    >
+                                        {module.status === 'Done' ? 'Completed' : 'Mark as Complete'}
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    )
+                ) : ( // Display Completed Modules
+                    mockCompletedModules.length === 0 ? (
+                        <p className="text-gray-400 text-lg text-center py-4">No completed courses yet. Start learning!</p>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {mockCompletedModules.map((module, index) => (
+                                <div key={index} className="bg-gray-700 border border-gray-600 rounded-2xl p-6 flex flex-col justify-between shadow-xl transition duration-300 ease-in-out hover:scale-105">
+                                    <div>
+                                        <h4 className="text-2xl font-semibold text-green-400 mb-3">{module.moduleName}</h4>
+                                        <p className="text-gray-300 text-md mb-3">{module.description}</p>
+                                        <p className="text-gray-400 text-sm mb-2">Estimated Time: <span className="font-bold">{module.estimatedTime}</span></p>
+                                        <p className="text-gray-400 text-sm">Status: <span className="font-bold text-green-400">Completed</span></p>
+                                        <p className="text-gray-400 text-sm">Points Earned: <span className="font-bold">{module.points}</span></p>
+                                    </div>
+                                    <Button className="mt-6 self-end text-md bg-gray-500 cursor-not-allowed" disabled>
+                                        <CheckCircle size={20} className="mr-2" /> Already Completed
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+                    )
+                )}
+                <MessageBox message={message} onConfirm={() => setMessage('')} />
+            </div>
         </div>
     );
 };
 
-// Leaderboard Component
+
+// Leaderboard Component: Displays users ranked by points.
 const Leaderboard = () => {
     const { db, isAuthReady, appId } = useContext(FirebaseContext);
     const [leaderboardData, setLeaderboardData] = useState([]);
@@ -604,13 +1005,13 @@ const Leaderboard = () => {
     useEffect(() => {
         if (!isAuthReady || !db) return;
 
-        // Listen for real-time updates to all user profiles to build the leaderboard
+        // Listen for real-time updates to all user profiles to build the leaderboard.
         const usersCollectionRef = collection(db, `artifacts/${appId}/users`);
         const unsubscribe = onSnapshot(usersCollectionRef, async (snapshot) => {
             setLoading(true);
             const users = [];
+            // Fetch each user's profile 'data' document.
             for (const userDoc of snapshot.docs) {
-                // Each userDoc represents a user's top-level folder, we need to get their profile 'data' document
                 const profileDocRef = doc(db, `artifacts/${appId}/users/${userDoc.id}/profile`, 'data');
                 try {
                     const profileSnap = await getDoc(profileDocRef);
@@ -618,7 +1019,7 @@ const Leaderboard = () => {
                         const data = profileSnap.data();
                         users.push({
                             id: userDoc.id,
-                            email: data.email || 'N/A', // Email might not be set for anonymous users
+                            email: data.email || 'N/A',
                             points: data.points || 0,
                             targetRole: data.targetRole || 'Not Set'
                         });
@@ -627,8 +1028,7 @@ const Leaderboard = () => {
                     console.error("Error fetching user profile for leaderboard:", error);
                 }
             }
-            // Sort by points in descending order
-            users.sort((a, b) => b.points - a.points);
+            users.sort((a, b) => b.points - a.points); // Sort by points in descending order.
             setLeaderboardData(users);
             setLoading(false);
         }, (error) => {
@@ -637,7 +1037,7 @@ const Leaderboard = () => {
             setLoading(false);
         });
 
-        return () => unsubscribe(); // Cleanup listener
+        return () => unsubscribe(); // Cleanup listener on component unmount.
     }, [db, isAuthReady, appId]);
 
     return (
@@ -651,25 +1051,25 @@ const Leaderboard = () => {
                 ) : leaderboardData.length === 0 ? (
                     <p className="text-gray-400 text-center text-lg py-4">No users on the leaderboard yet.</p>
                 ) : (
-                    <div className="overflow-x-auto rounded-xl border border-gray-700 shadow-inner"> {/* Table container styling */}
+                    <div className="overflow-x-auto rounded-xl border border-gray-700 shadow-inner">
                         <table className="min-w-full divide-y divide-gray-700">
                             <thead className="bg-gray-700">
                                 <tr>
-                                    <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tl-xl">Rank</th> {/* Rounded corners */}
+                                    <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tl-xl">Rank</th>
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">User ID</th>
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Email</th>
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Target Role</th>
-                                    <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tr-xl">Points</th> {/* Rounded corners */}
+                                    <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tr-xl">Points</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-gray-800 divide-y divide-gray-700">
                                 {leaderboardData.map((user, index) => (
-                                    <tr key={user.id} className={index % 2 === 0 ? 'bg-gray-800' : 'bg-gray-700 hover:bg-gray-600 transition duration-150'}> {/* Hover effect */}
+                                    <tr key={user.id} className={index % 2 === 0 ? 'bg-gray-800' : 'bg-gray-700 hover:bg-gray-600 transition duration-150'}>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-100">{index + 1}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 break-all">{user.id}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.email}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.targetRole}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-lg text-gray-100 font-extrabold">{user.points}</td> {/* Larger, bolder points */}
+                                        <td className="px-6 py-4 whitespace-nowrap text-lg text-gray-100 font-extrabold">{user.points}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -683,24 +1083,25 @@ const Leaderboard = () => {
 };
 
 
-// Assessment Component for Gen-AI driven quizzes
-const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssessmentComplete from props
-    const { db, userId, appId, isAuthReady, geminiApiKey } = useContext(FirebaseContext); // Get all necessary context values, including geminiApiKey
-    const [userProfile, setUserProfile] = useState(null); // State for userProfile within Assessment
+// Assessment Component for Gen-AI driven quizzes.
+const Assessment = ({ setCurrentPage }) => {
+    const { db, userId, appId, isAuthReady, geminiApiKey } = useContext(FirebaseContext);
+    const [userProfile, setUserProfile] = useState(null);
     const [skillToAssess, setSkillToAssess] = useState('');
     const [difficulty, setDifficulty] = useState('medium');
     const [quizQuestions, setQuizQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [userAnswers, setUserAnswers] = useState({});
     const [showResults, setShowResults] = useState(false);
-    const [loading, setLoading] = useState(true); // Set initial loading to true
+    const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
-    const [questionType, setQuestionType] = useState('mcq'); // 'mcq' or 'coding'
+    const [questionType, setQuestionType] = useState('mcq');
     const [userCode, setUserCode] = useState('');
     const [codeOutput, setCodeOutput] = useState('');
     const [testResults, setTestResults] = useState([]);
+    const [improvementSuggestions, setImprovementSuggestions] = useState([]); // New state for suggestions.
 
-    // Fetch user profile when component mounts or auth state changes
+    // Fetch user profile on mount or auth state change.
     useEffect(() => {
         let unsubscribe;
         if (isAuthReady && userId && db) {
@@ -710,9 +1111,9 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                 if (docSnap.exists()) {
                     setUserProfile(docSnap.data());
                 } else {
-                    setUserProfile(null); // Profile might not exist yet
+                    setUserProfile(null);
                     setMessage("Please set up your profile first.");
-                    setCurrentPage('profileSetup'); // Redirect if profile is missing
+                    setCurrentPage('profileSetup');
                 }
                 setLoading(false);
             }, (error) => {
@@ -721,7 +1122,7 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                 setLoading(false);
             });
         } else if (isAuthReady && !userId) {
-            setCurrentPage('auth'); // Redirect to auth if not signed in
+            setCurrentPage('auth');
         }
 
         return () => {
@@ -730,26 +1131,27 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
     }, [userId, isAuthReady, db, appId, setCurrentPage]);
 
 
-    // Helper to calculate skill gaps (reusing logic from SkillGapAnalysis)
+    // Helper to calculate skill gaps based on user's rated skills.
     const calculateSkillGaps = (currentSkills, targetRole) => {
         if (!currentSkills || !targetRole || !roleBenchmarks[targetRole]) {
             return [];
         }
         const requiredSkills = roleBenchmarks[targetRole];
         const gaps = [];
-        const userSkillsMap = new Map(currentSkills.map(skill => [skill.toLowerCase(), 5]));
+        const userSkillsMap = new Map(currentSkills.map(skill => [skill.name.toLowerCase(), skill.level]));
 
         for (const skill in requiredSkills) {
             const requiredProficiency = requiredSkills[skill];
-            const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? 5 : 0;
+            const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? userSkillsMap.get(skill.toLowerCase()) : 0;
             const gapPercentage = Math.max(0, ((requiredProficiency - userProficiency) / requiredProficiency) * 100);
             if (gapPercentage > 0) {
                 gaps.push({ skill: skill, gap: gapPercentage });
             }
         }
-        return gaps.sort((a, b) => b.gap - a.gap); // Sort by largest gap first
+        return gaps.sort((a, b) => b.gap - a.gap);
     };
 
+    // Generates quiz questions using Gemini API.
     const handleGenerateQuiz = async () => {
         setLoading(true);
         setMessage('');
@@ -760,8 +1162,9 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
         setUserCode('');
         setCodeOutput('');
         setTestResults([]);
+        setImprovementSuggestions([]);
 
-        if (!userProfile) { // Added check for userProfile
+        if (!userProfile) {
             setMessage("User profile not loaded. Please ensure your profile is set up.");
             setLoading(false);
             return;
@@ -773,20 +1176,20 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
         if (!skillToAssess && userProfile.skills && userProfile.targetRole) {
             const gaps = calculateSkillGaps(userProfile.skills, userProfile.targetRole);
             if (gaps.length > 0) {
-                targetSkillForPrompt = gaps[0].skill; // Focus on the largest gap
-                promptText = `Generate 40 ${difficulty} difficulty quiz questions about ${targetSkillForPrompt} to help fill a skill gap. Include a mix of multiple-choice and coding challenges.`;
+                targetSkillForPrompt = gaps[0].skill; // Focus on the largest gap.
+                promptText = `Generate 10 ${difficulty} difficulty quiz questions about ${targetSkillForPrompt} to help fill a skill gap. Include a mix of multiple-choice and coding challenges.`;
             } else {
-                promptText = `Generate 40 ${difficulty} difficulty quiz questions about general software development. Include a mix of multiple-choice and coding challenges.`;
+                promptText = `Generate 10 ${difficulty} difficulty quiz questions about general software development. Include a mix of multiple-choice and coding challenges.`;
             }
         } else if (skillToAssess) {
-            promptText = `Generate 40 ${difficulty} difficulty quiz questions about ${skillToAssess}. Include a mix of multiple-choice and coding challenges.`;
+            promptText = `Generate 10 ${difficulty} difficulty quiz questions about ${skillToAssess}. Include a mix of multiple-choice and coding challenges.`;
         } else {
             setMessage("Please enter a skill to assess or ensure your profile is set up to identify skill gaps.");
             setLoading(false);
             return;
         }
 
-        promptText += ` For multiple-choice, provide 4 options and the correct answer. For coding challenges, provide a starter code, the language (javascript or python), and at least 2 test cases with input (as a stringified array/value) and expected output (as a string). Also provide a 'solution' field for coding challenges containing the correct function implementation. Ensure the output is a JSON array of question objects.`;
+        promptText += ` For multiple-choice, provide 4 options and the correct answer. For coding challenges, provide a starter code, the language (javascript or python), and at least 2 test cases with input and expected output. Ensure the output is a JSON array of question objects.`;
 
         try {
             const payload = {
@@ -800,11 +1203,11 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                             properties: {
                                 question: { type: "STRING" },
                                 type: { type: "STRING", enum: ["mcq", "coding"] },
-                                options: { type: "ARRAY", items: { type: "STRING" } }, // Only for MCQ
-                                correctAnswer: { type: "STRING" }, // For MCQ
-                                starterCode: { type: "STRING" }, // Only for Coding
-                                language: { type: "STRING" }, // Only for Coding
-                                testCases: { // Only for Coding
+                                options: { type: "ARRAY", items: { type: "STRING" } },
+                                correctAnswer: { type: "STRING" },
+                                starterCode: { type: "STRING" },
+                                language: { type: "STRING" },
+                                testCases: {
                                     type: "ARRAY",
                                     items: {
                                         type: "OBJECT",
@@ -815,7 +1218,6 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                                         required: ["input", "expectedOutput"]
                                     }
                                 },
-                                solution: { type: "STRING" } // For coding evaluation
                             },
                             required: ["question", "type"]
                         }
@@ -823,9 +1225,7 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                 }
             };
 
-            // Use the dedicated geminiApiKey here
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
-
             const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -833,26 +1233,44 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const errorBody = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}. Response: ${errorBody}`);
             }
 
             const result = await response.json();
-            if (result.candidates && result.candidates.length > 0 && result.candidates[0].content && result.candidates[0].content.parts && result.candidates[0].content.parts.length > 0) {
-                const jsonResponse = JSON.parse(result.candidates[0].content.parts[0].text);
-                if (jsonResponse.length > 0) {
-                    setQuizQuestions(jsonResponse);
+            
+            let jsonResponse;
+            try {
+                jsonResponse = JSON.parse(result.candidates[0].content.parts[0].text);
+            } catch (parseError) {
+                console.error("Error parsing JSON response from Gemini API:", parseError);
+                setMessage("Failed to parse quiz data from Gemini API. It might have returned malformed JSON. Falling back to mock data.");
+                setQuizQuestions(generateMockQuestions(questionType, targetSkillForPrompt));
+                return;
+            }
+
+            if (jsonResponse && jsonResponse.length > 0) {
+                const filteredQuestions = jsonResponse.filter(q => {
+                    if (q.type === 'coding') {
+                        return q.starterCode && q.language && q.testCases && q.testCases.length > 0;
+                    }
+                    return true;
+                });
+
+                if (filteredQuestions.length > 0) {
+                    setQuizQuestions(filteredQuestions);
                     setMessage("Quiz generated successfully with Gemini API!");
-                    // Update workflow progress directly here
+                    // Update workflow to 'Assessment Completed' after quiz generation.
                     if (db && userId && appId) {
                         const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
                         await updateDoc(userRef, { workflowProgress: 'Assessment Completed' });
                     }
                 } else {
-                    setMessage("Gemini API returned no questions. Falling back to mock data.");
+                    setMessage("Gemini API returned no valid questions after filtering. Falling back to mock data.");
                     setQuizQuestions(generateMockQuestions(questionType, targetSkillForPrompt));
                 }
             } else {
-                setMessage("Unexpected response from Gemini API. Falling back to mock data.");
+                setMessage("Gemini API returned no questions or an empty array. Falling back to mock data.");
                 setQuizQuestions(generateMockQuestions(questionType, targetSkillForPrompt));
             }
         } catch (error) {
@@ -864,10 +1282,10 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
         }
     };
 
-    // Mock data generator for fallback
+    // Mock data generator for fallback if AI fails.
     const generateMockQuestions = (type, skill) => {
         const mockQuestions = [];
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < 5; i++) { // Reduced mock questions to 5 for quicker testing.
             if (type === 'mcq') {
                 mockQuestions.push({
                     type: 'mcq',
@@ -875,23 +1293,21 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                     options: ['Berlin', 'Madrid', 'Paris', 'Rome'],
                     correctAnswer: 'Paris'
                 });
-            } else { // Coding challenge mock
+            } else { // Coding challenge mock.
                 mockQuestions.push({
                     type: 'coding',
                     question: `(Mock Coding ${i + 1} for ${skill || 'General'}) Write a JavaScript function 'addNumbers' that takes two numbers and returns their sum.`,
-                    starterCode: `function addNumbers(a, b) {\n  // Your code here\n}`,
+                    starterCode: `function addNumbers(a, b) {\n  // Your code here\n  return a + b;\n}`,
                     language: 'javascript',
                     testCases: [
                         { input: '[1,2]', expectedOutput: '3' },
                         { input: '[10,20]', expectedOutput: '30' }
-                    ],
-                    solution: `function addNumbers(a, b) { return a + b; }`
+                    ]
                 });
             }
         }
         return mockQuestions;
     };
-
 
     const handleAnswerSelect = (questionIndex, selectedOption) => {
         setUserAnswers(prev => ({ ...prev, [questionIndex]: selectedOption }));
@@ -901,9 +1317,10 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
         setUserCode(e.target.value);
     };
 
+    // Simulates code execution (JavaScript only, Python is placeholder).
     const handleRunCode = () => {
         const currentQuestion = quizQuestions[currentQuestionIndex];
-        if (currentQuestion.type !== 'coding') return;
+        if (currentQuestion.type !== 'coding' || !currentQuestion.testCases) return;
 
         if (!userCode.trim()) {
             setCodeOutput("Please write some code before running tests.");
@@ -911,39 +1328,176 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
             return;
         }
 
-        setCodeOutput('Simulating tests...');
+        setCodeOutput('Running tests...');
         setTestResults([]);
 
-        setTimeout(() => {
+        setTimeout(() => { // Simulate network delay.
             let passedTests = 0;
             const results = [];
 
             currentQuestion.testCases.forEach((test) => {
+                let testPassed = false;
+                let actualOutput = 'N/A';
+
+                try {
+                    if (currentQuestion.language === 'javascript') {
+                        // WARNING: This is a very basic client-side simulation and not secure for production.
+                        // For robust and secure code execution, you'd send the user's code and test cases
+                        // to a secure backend environment (e.g., a Cloud Function or dedicated sandbox).
+                        const functionNameMatch = userCode.match(/function\s+(\w+)\s*\(/);
+                        const functionName = functionNameMatch ? functionNameMatch[1] : null;
+
+                        if (functionName) {
+                            const parsedInput = JSON.parse(`[${test.input}]`); // Ensure input is parsed as array for spread operator.
+                            
+                            const func = new Function(`
+                                ${userCode}
+                                try {
+                                    return ${functionName}(...${JSON.stringify(parsedInput)});
+                                } catch (e) {
+                                    return 'ERROR: ' + e.message;
+                                }
+                            `);
+                            actualOutput = func().toString();
+                        } else {
+                            actualOutput = "Error: Could not find function name in your code.";
+                        }
+
+                    } else if (currentQuestion.language === 'python') {
+                        // Python execution cannot be simulated directly in browser JS.
+                        // This is a placeholder for a backend call.
+                        actualOutput = `Python simulation: (Input: ${test.input}) -> ${test.expectedOutput}`;
+                    }
+
+                    testPassed = (actualOutput === test.expectedOutput);
+                } catch (e) {
+                    actualOutput = `Error during execution: ${e.message}`;
+                    testPassed = false;
+                }
+
+                if (testPassed) {
+                    passedTests++;
+                }
                 results.push({
                     testCase: `Input: ${test.input}, Expected: ${test.expectedOutput}`,
-                    actualOutput: test.expectedOutput, // Simulate actual output matching expected
-                    passed: true // Simulate test passing
+                    actualOutput: actualOutput,
+                    passed: testPassed
                 });
-                passedTests++;
             });
 
             setCodeOutput(`Tests completed. Passed ${passedTests}/${currentQuestion.testCases.length} tests.`);
             setTestResults(results);
-        }, 1500);
+        }, 2000);
     };
 
-    const handleSubmitQuiz = async () => { // Made async to await Firestore update
+    // Submits the quiz, calculates score, updates skill level, and gets improvement suggestions.
+    const handleSubmitQuiz = async () => {
         setShowResults(true);
-        // Update workflow progress directly here
-        if (db && userId && appId) {
+        const score = calculateScore();
+        const totalQuestions = quizQuestions.length;
+        const percentage = (score / totalQuestions) * 100;
+        const assessedSkill = skillToAssess || (userProfile?.targetRole ? calculateSkillGaps(userProfile.skills, userProfile.targetRole)[0]?.skill : 'General Skills');
+
+        if (!db || !userId || !appId || !userProfile) return;
+
+        try {
             const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
-            try {
-                await updateDoc(userRef, { workflowProgress: 'Recommendations Generated' });
-                setMessage("Quiz submitted! Workflow progress updated.");
-            } catch (error) {
-                console.error("Error updating workflow progress from Assessment:", error);
-                setMessage("Error submitting quiz and updating workflow.");
+            const currentSkills = userProfile.skills || [];
+            let updatedSkills = [...currentSkills];
+            let skillFound = false;
+
+            // Find and update the assessed skill's level.
+            updatedSkills = updatedSkills.map(s => {
+                if (s.name.toLowerCase() === assessedSkill.toLowerCase()) {
+                    skillFound = true;
+                    // Simple logic: if score > 50%, increase level by 1 (max 5), else decrease by 1 (min 0).
+                    let newLevel = s.level;
+                    if (percentage > 50) {
+                        newLevel = Math.min(s.level + 1, 5);
+                    } else if (percentage <= 50 && s.level > 0) {
+                        newLevel = Math.max(s.level - 1, 0);
+                    }
+                    return { ...s, level: newLevel, lastAssessed: new Date().toISOString() };
+                }
+                return s;
+            });
+
+            // If the assessed skill was not in the profile, add it with an initial level.
+            if (!skillFound && assessedSkill !== 'General Skills') {
+                updatedSkills.push({
+                    name: assessedSkill,
+                    level: percentage > 50 ? 3 : 1, // Initial level based on performance.
+                    lastAssessed: new Date().toISOString()
+                });
             }
+
+            // Update workflow progress and skill levels in Firestore.
+            await updateDoc(userRef, {
+                workflowProgress: 'Recommendations Generated',
+                skills: updatedSkills // Save updated skill levels.
+            });
+            setMessage("Quiz submitted! Workflow progress and skill levels updated.");
+
+            // Get improvement suggestions from Gemini API.
+            await getImprovementSuggestions(assessedSkill, percentage);
+
+        } catch (error) {
+            console.error("Error updating workflow progress or skill levels:", error);
+            setMessage("Error submitting quiz and updating workflow.");
+        }
+    };
+
+    // Requests improvement suggestions from Gemini API.
+    const getImprovementSuggestions = async (skill, scorePercentage) => {
+        setLoading(true);
+        setImprovementSuggestions([]);
+        const feedback = scorePercentage > 75 ? "excellent" : scorePercentage > 50 ? "good" : scorePercentage > 25 ? "fair" : "needs significant improvement";
+        const promptText = `I just took an assessment on ${skill} and my score was ${scorePercentage.toFixed(0)}% (${feedback}). Based on this, suggest 3-5 specific concepts, resources (e.g., topics, types of exercises, project ideas), or learning paths to improve my proficiency in ${skill}. Provide the output as a JSON array of strings.`;
+
+        try {
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: promptText }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "ARRAY",
+                        items: { type: "STRING" }
+                    }
+                }
+            };
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`;
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                throw new Error(`HTTP error! status: ${response.status}. Response: ${errorBody}`);
+            }
+
+            const result = await response.json();
+            let suggestionsArray;
+            try {
+                suggestionsArray = JSON.parse(result.candidates[0].content.parts[0].text);
+            } catch (parseError) {
+                console.error("Error parsing JSON response for suggestions:", parseError);
+                setImprovementSuggestions(["Could not generate specific suggestions. Focus on core concepts."]);
+                return;
+            }
+
+            if (suggestionsArray && suggestionsArray.length > 0) {
+                setImprovementSuggestions(suggestionsArray);
+            } else {
+                setImprovementSuggestions(["No specific improvement suggestions could be generated by AI."]);
+            }
+        } catch (error) {
+            console.error("Error getting improvement suggestions:", error);
+            setImprovementSuggestions([`Failed to get suggestions: ${error.message}.`]);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -955,10 +1509,9 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                     score++;
                 }
             } else if (q.type === 'coding') {
-                // For coding, assume full points if all mock tests passed (based on simulated results)
-                const currentQuestion = quizQuestions[index];
-                const passedTestsCount = testResults.filter(r => r.passed).length;
-                if (passedTestsCount === currentQuestion.testCases.length && userCode.trim()) { // Only score if code was written and tests simulated pass
+                // For coding, check if all simulated tests passed.
+                const currentQuestionTestResults = testResults.filter(r => r.passed);
+                if (currentQuestionTestResults.length === q.testCases.length && userCode.trim()) {
                      score++;
                 }
             }
@@ -968,15 +1521,14 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
 
     const currentQuestion = quizQuestions[currentQuestionIndex];
 
-    if (loading || !userProfile) { // Show loading until profile is fetched
+    if (loading || !userProfile) {
         return (
             <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-400 text-2xl">
-                Loading assessment...
+                {loading ? "Loading assessment..." : "User profile not loaded. Please ensure your profile is set up."}
                 <MessageBox message={message} onConfirm={() => setMessage('')} />
             </div>
         );
     }
-
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4 sm:p-6 md:p-8 font-inter text-gray-100">
@@ -1028,6 +1580,19 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
                     <div className="space-y-6">
                         <h4 className="text-3xl font-extrabold text-center text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-blue-500 mb-6">Quiz Results</h4>
                         <p className="text-2xl text-center text-gray-200 mb-6">You scored: <span className="font-bold text-green-400">{calculateScore()}</span> out of <span className="font-bold text-blue-400">{quizQuestions.length}</span></p>
+                        
+                        {/* Improvement Suggestions */}
+                        {improvementSuggestions.length > 0 && (
+                            <div className="bg-gray-700 p-6 rounded-xl shadow-md border border-gray-600 mb-6">
+                                <h5 className="text-xl font-semibold text-yellow-400 mb-3">Improvement Suggestions:</h5>
+                                <ul className="list-disc list-inside text-gray-300 text-lg space-y-2">
+                                    {improvementSuggestions.map((suggestion, idx) => (
+                                        <li key={idx}>{suggestion}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
                         <div className="mt-6 space-y-4">
                             {quizQuestions.map((q, qIndex) => (
                                 <div key={qIndex} className="mb-4 p-6 rounded-xl bg-gray-700 border border-gray-600 shadow-md">
@@ -1146,7 +1711,7 @@ const Assessment = ({ setCurrentPage }) => { // Removed userProfile and onAssess
 };
 
 
-// Dashboard Component
+// Dashboard Component: Main landing page after login, shows user progress and navigation.
 const Dashboard = ({ setCurrentPage }) => {
     const { db, auth, userId, isAuthReady, appId } = useContext(FirebaseContext);
     const [userProfile, setUserProfile] = useState(null);
@@ -1154,7 +1719,7 @@ const Dashboard = ({ setCurrentPage }) => {
     const [message, setMessage] = useState('');
 
     useEffect(() => {
-        // Set up real-time listener for user profile
+        // Set up real-time listener for user profile.
         let unsubscribe;
         if (isAuthReady && userId && db) {
             const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
@@ -1162,7 +1727,6 @@ const Dashboard = ({ setCurrentPage }) => {
                 if (docSnap.exists()) {
                     setUserProfile(docSnap.data());
                 } else {
-                    // If profile doesn't exist, prompt user to set it up
                     setUserProfile(null);
                     setMessage("Please set up your profile.");
                 }
@@ -1173,12 +1737,11 @@ const Dashboard = ({ setCurrentPage }) => {
                 setLoading(false);
             });
         } else if (isAuthReady && !userId) {
-            // If auth is ready but no userId (e.g., failed anonymous sign-in), redirect to auth
             setCurrentPage('auth');
         }
 
         return () => {
-            if (unsubscribe) unsubscribe(); // Cleanup listener
+            if (unsubscribe) unsubscribe();
         };
     }, [userId, isAuthReady, db, appId, setCurrentPage]);
 
@@ -1194,30 +1757,6 @@ const Dashboard = ({ setCurrentPage }) => {
         }
     };
 
-    // Function to handle module completion and update points
-    const handleCompleteModule = async (pointsAwarded, moduleName) => {
-        if (!isAuthReady || !userId || !db || !userProfile) {
-            setMessage("Cannot update points. Firebase not ready or profile missing.");
-            return;
-        }
-        try {
-            const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
-            const newPoints = (userProfile.points || 0) + pointsAwarded;
-            const updatedCompletedModules = [...(userProfile.completedModules || []), moduleName];
-
-            await updateDoc(userRef, {
-                points: newPoints,
-                completedModules: updatedCompletedModules,
-                workflowProgress: 'Learning In Progress'
-            });
-            setMessage(`Module "${moduleName}" completed! You earned ${pointsAwarded} points. Total points: ${newPoints}`);
-        } catch (error) {
-            console.error("Error updating points:", error);
-            setMessage("Failed to update points.");
-        }
-    };
-
-
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-400 text-2xl">
@@ -1226,7 +1765,7 @@ const Dashboard = ({ setCurrentPage }) => {
         );
     }
 
-    // If no user profile, prompt to set it up
+    // If no user profile, prompt to set it up.
     if (!userProfile) {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
@@ -1248,8 +1787,11 @@ const Dashboard = ({ setCurrentPage }) => {
                     </h1>
                     <div className="flex flex-wrap justify-center sm:justify-end gap-4">
                         <Button onClick={() => setCurrentPage('profileSetup')} icon={Edit} className="bg-gradient-to-r from-green-500 to-teal-600 hover:from-green-600 hover:to-teal-700 text-lg">Edit Profile</Button>
+                        {/* New button to view completed courses */}
+                        <Button onClick={() => setCurrentPage('learningPlatform', { showCompletedOnly: true })} icon={FileTextIcon} className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-lg">View Completed Courses</Button>
                         <Button onClick={() => setCurrentPage('leaderboard')} icon={Users} className="bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 text-lg">View Leaderboard</Button>
                         <Button onClick={() => setCurrentPage('assessment')} icon={Brain} className="bg-gradient-to-r from-pink-500 to-red-600 hover:from-pink-600 hover:to-red-700 text-lg">Take Assessment</Button>
+                        <Button onClick={() => setCurrentPage('learningPlatform')} icon={BookOpen} className="bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-lg">Learning Modules</Button>
                         <Button onClick={handleLogout} icon={LogOut} className="bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-lg">Logout</Button>
                     </div>
                 </div>
@@ -1271,7 +1813,7 @@ const Dashboard = ({ setCurrentPage }) => {
                         </div>
                         <div className="flex items-center gap-3">
                             <BookOpen size={28} className="text-green-400" />
-                            <p>Your Skills: <span className="font-bold text-green-300 text-xl">{userProfile.skills && userProfile.skills.length > 0 ? userProfile.skills.join(', ') : 'None listed'}</span></p>
+                            <p>Total Skills Rated: <span className="font-bold text-green-300 text-xl">{userProfile.skills?.length || 0}</span></p>
                         </div>
                     </div>
                 </div>
@@ -1280,18 +1822,9 @@ const Dashboard = ({ setCurrentPage }) => {
                 <SkillGapAnalysis userSkills={userProfile.skills || []} targetRole={userProfile.targetRole || ''} />
 
                 {/* Learning Recommendations Section */}
-                <LearningRecommendations
-                    skillGaps={
-                        userProfile.skills && userProfile.targetRole && roleBenchmarks[userProfile.targetRole]
-                            ? Object.keys(roleBenchmarks[userProfile.targetRole]).map(skill => {
-                                const requiredProficiency = roleBenchmarks[userProfile.targetRole][skill];
-                                const userProficiency = userProfile.skills.map(s => s.toLowerCase()).includes(skill.toLowerCase()) ? 5 : 0;
-                                const gapPercentage = Math.max(0, ((requiredProficiency - userProficiency) / requiredProficiency) * 100);
-                                return { skill, required: requiredProficiency, user: userProficiency, gap: gapPercentage };
-                            })
-                            : []
-                    }
-                    onCompleteModule={handleCompleteModule}
+                <LearningPlatform
+                    userSkills={userProfile.skills || []}
+                    targetRole={userProfile.targetRole || ''}
                     completedModules={userProfile.completedModules || []}
                 />
                 <MessageBox message={message} onConfirm={() => setMessage('')} />
@@ -1300,24 +1833,27 @@ const Dashboard = ({ setCurrentPage }) => {
     );
 };
 
-// Main App Component
+// Main App Component: Manages global state and page routing.
 function App() {
-    const [currentPage, setCurrentPage] = useState('auth'); // Default to auth page
+    // currentPage can now accept an object for passing additional state (like showCompletedOnly).
+    const [currentPage, setCurrentPage] = useState({ name: 'auth', props: {} });
 
     const renderPage = () => {
-        switch (currentPage) {
+        switch (currentPage.name) {
             case 'auth':
-                return <Auth setCurrentPage={setCurrentPage} />;
+                return <Auth setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
             case 'profileSetup':
-                return <ProfileSetup setCurrentPage={setCurrentPage} />;
+                return <ProfileSetup setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
             case 'dashboard':
-                return <Dashboard setCurrentPage={setCurrentPage} />;
+                return <Dashboard setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
             case 'leaderboard':
-                return <Leaderboard setCurrentPage={setCurrentPage} />;
-            case 'assessment': // NEW CASE FOR ASSESSMENT PAGE
-                return <Assessment setCurrentPage={setCurrentPage} />;
+                return <Leaderboard setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+            case 'assessment':
+                return <Assessment setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+            case 'learningPlatform':
+                return <LearningPlatform {...currentPage.props} />; // Pass props to LearningPlatform.
             default:
-                return <Auth setCurrentPage={setCurrentPage} />;
+                return <Auth setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
         }
     };
 
@@ -1325,12 +1861,13 @@ function App() {
         <FirebaseProvider>
             {/* The styling is purely via Tailwind classes. */}
             {/* IMPORTANT: Tailwind CSS CDN and Inter font MUST be included in public/index.html */}
-            {/* IMPORTANT: Global styles for html, body, and #root MUST be in public/index.html */}
+            {/* IMPORTANT: Global styles for html, body, body, and #root MUST be in public/index.html */}
             <div className="font-inter antialiased">
                 {renderPage()}
             </div>
         </FirebaseProvider>
     );
-}
+} 
 
 export default App;
+
