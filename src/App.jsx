@@ -1,20 +1,22 @@
-import React, { useState, useEffect, createContext, useContext, useRef, useMemo } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef, useMemo, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, getDoc } from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { getFirestore, doc, setDoc, updateDoc, onSnapshot, collection, getDoc, getDocs } from 'firebase/firestore';
 import Chart from 'chart.js/auto';
-import { Home, User, Target, Brain, Award, Users, LogOut, Edit, BarChart, BookOpen, MessageSquare, Briefcase, UploadCloud, Code, Play, CheckCircle, XCircle, Settings, Search, FileText, FileText as FileTextIcon } from 'lucide-react'; // Renamed FileText to FileTextIcon to avoid conflict
+import { Home, User, Target, Brain, Award, Users, LogOut, Edit, BarChart, BookOpen, MessageSquare, Briefcase, UploadCloud, Code, Play, CheckCircle, XCircle, Settings, Search, FileText, FileText as FileTextIcon, UserCog, BriefcaseBusiness } from 'lucide-react';
 
 // --- Firebase Context ---
 // Provides Firebase app, db, auth instances, userId, and auth readiness status to all components.
 const FirebaseContext = createContext(null);
 
-const FirebaseProvider = ({ children }) => {
+// Export FirebaseProvider so it can be imported in main.jsx
+export const FirebaseProvider = ({ children }) => {
     const [app, setApp] = useState(null);
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
     const [userId, setUserId] = useState(null);
     const [isAuthReady, setIsAuthReady] = useState(false);
+    const [userRole, setUserRole] = useState(null); // New state for user role
     const [geminiApiKey] = useState("AIzaSyA-4-3FTYo7yicpgD6aVhg1smciwNGnFgk"); // State for Gemini API Key - REPLACE WITH YOUR ACTUAL KEY
 
     // Firebase Configuration - wrapped in useMemo for stability.
@@ -39,28 +41,45 @@ const FirebaseProvider = ({ children }) => {
                 setApp(initializedApp);
                 setDb(firestoreDb);
                 setAuth(firebaseAuth);
+                console.log("FirebaseProvider: Firebase initialized.");
 
                 // Listen for authentication state changes to manage user sessions.
                 const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+                    console.log("FirebaseProvider: Auth state changed. User:", user ? user.uid : "null");
+                    setUserId(user ? user.uid : null); // Set userId immediately
+
+                    // Set auth ready as soon as the auth state is known.
+                    setIsAuthReady(true);
+                    console.log("FirebaseProvider: isAuthReady set to true (after auth state change)");
+
                     if (user) {
-                        setUserId(user.uid);
-                    } else {
-                        // If no user is signed in, attempt anonymous sign-in.
+                        // Now, fetch user role. This can be asynchronous and won't block isAuthReady.
+                        const userProfileRef = doc(firestoreDb, `artifacts/${localFirebaseConfig.appId}/users/${user.uid}/profile`, 'data');
                         try {
-                            await signInAnonymously(firebaseAuth);
-                            const currentUserId = firebaseAuth.currentUser?.uid || crypto.randomUUID();
-                            setUserId(currentUserId);
-                        } catch (error) {
-                            console.error("Error during anonymous sign-in:", error);
-                            setUserId(crypto.randomUUID()); // Fallback if anonymous sign-in fails.
+                            const docSnap = await getDoc(userProfileRef);
+                            if (docSnap.exists()) {
+                                const role = docSnap.data().userType || 'employee'; // Default to 'employee' if userType is missing
+                                setUserRole(role);
+                                console.log("FirebaseProvider: User role fetched:", role);
+                            } else {
+                                setUserRole('employee'); // Default if profile doesn't exist yet (e.g., new registration)
+                                console.log("FirebaseProvider: User profile does not exist, defaulting to employee role.");
+                            }
+                        } catch (profileError) {
+                            console.error("FirebaseProvider: Error fetching user profile for role:", profileError);
+                            setUserRole('employee'); // Default on error
                         }
+                    } else {
+                        setUserRole(null); // Clear user role if no user is authenticated
                     }
-                    setIsAuthReady(true); // Mark Firebase authentication as ready.
                 });
 
                 return () => unsubscribe(); // Cleanup the auth listener on component unmount.
             } catch (error) {
-                console.error("Failed to initialize Firebase:", error);
+                console.error("FirebaseProvider: Failed to initialize Firebase:", error);
+                // If Firebase initialization itself fails, still set isAuthReady to true
+                // so the App component can handle the error state or redirect.
+                setIsAuthReady(true);
             }
         }
     }, [app, localFirebaseConfig]); // Dependencies ensure effect runs only when necessary.
@@ -68,7 +87,7 @@ const FirebaseProvider = ({ children }) => {
     const appId = localFirebaseConfig.appId; // Get appId from the stable config.
 
     return (
-        <FirebaseContext.Provider value={{ app, db, auth, userId, isAuthReady, appId, localFirebaseConfig, geminiApiKey }}>
+        <FirebaseContext.Provider value={{ app, db, auth, userId, isAuthReady, appId, localFirebaseConfig, geminiApiKey, userRole }}>
             {children}
         </FirebaseContext.Provider>
     );
@@ -192,46 +211,108 @@ const WorkflowProgressBar = ({ currentStage }) => {
 // --- App Pages/Components ---
 
 // Authentication Component: Handles user login and registration.
-const Auth = ({ setCurrentPage }) => {
+const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
     const { auth, db, isAuthReady, appId } = useContext(FirebaseContext);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [isRegister, setIsRegister] = useState(false);
     const [message, setMessage] = useState('');
+    const [authMode, setAuthMode] = useState('choose'); // 'choose', 'employeeLogin', 'adminLogin', 'employeeRegister'
 
-    const handleAuth = async () => {
+    const handleLogin = async (expectedUserType) => {
+        if (!isAuthReady) {
+            setMessage("Firebase not ready. Please wait.");
+            console.log("Auth: Firebase not ready for login.");
+            return;
+        }
+        console.log(`Auth: Login attempt for email: ${email}, expecting role: ${expectedUserType}`);
+
+        try {
+            const userCredential = await signInWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+            console.log("Auth: User signed in successfully with Firebase Auth:", user.uid);
+
+            // Fetch user profile to verify role
+            const userProfileRef = doc(db, `artifacts/${appId}/users/${user.uid}/profile`, 'data');
+            const docSnap = await getDoc(userProfileRef);
+            console.log("Auth: Profile fetched after login. Doc exists:", docSnap.exists());
+
+            if (docSnap.exists()) {
+                const actualUserType = docSnap.data().userType;
+                console.log(`Auth: User profile found. Actual user type: ${actualUserType}. Expected user type: ${expectedUserType}.`);
+
+                if (actualUserType === expectedUserType) {
+                    setMessage("Login successful!");
+                    console.log(`Auth: Role match! Message set. onAuthSuccessAndMessageDismissed will be called on OK.`);
+                } else {
+                    // Role mismatch: Log out the user and inform them.
+                    await signOut(auth);
+                    const msg = `Login failed: Your account is registered as a '${actualUserType}', but you tried to log in as '${expectedUserType}'. Please use the correct login option or contact support.`;
+                    setMessage(msg);
+                    console.log(`Auth: Role mismatch. Logged out user. Message: ${msg}`);
+                }
+            } else {
+                // Profile does not exist for this user ID
+                console.log("Auth: User profile document does not exist for this user ID.");
+                if (expectedUserType === 'employee') {
+                    setMessage("Login successful! Please complete your profile.");
+                    console.log("Auth: New employee, message set. onAuthSuccessAndMessageDismissed will be called on OK.");
+                } else {
+                    // Admin login without a profile is an invalid state, log them out.
+                    await signOut(auth);
+                    const msg = "Login failed: Admin profile not found. Please ensure your admin profile is set up correctly.";
+                    setMessage(msg);
+                    console.log(`Auth: Admin login without profile. Logged out user. Message: ${msg}`);
+                }
+            }
+        } catch (error) {
+            console.error("Auth: Authentication or profile fetch failed:", error);
+            setMessage(`Authentication failed: ${error.message}. Please check your credentials.`);
+        }
+    };
+
+    const handleRegister = async () => {
         if (!isAuthReady) {
             setMessage("Firebase not ready. Please wait.");
             return;
         }
+        console.log("Auth: Registration attempt for:", email);
 
         try {
-            let userCredential;
-            if (isRegister) {
-                userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                // Create user profile in Firestore upon registration.
-                const userRef = doc(db, `artifacts/${appId}/users/${userCredential.user.uid}/profile`, 'data');
-                await setDoc(userRef, {
-                    email: userCredential.user.email,
-                    skills: [], // Initial empty skills array (now array of objects)
-                    targetRole: '',
-                    points: 0,
-                    badges: [],
-                    userId: userCredential.user.uid,
-                    workflowProgress: 'Profile Loaded', // Initial workflow stage.
-                    completedModules: [], // Initialize completed modules.
-                    inferredSkillVectors: {} // Placeholder for advanced skill vectors.
-                });
-                setMessage("Registration successful! Please log in.");
-                setIsRegister(false); // Switch to login after successful registration.
-            } else {
-                userCredential = await signInWithEmailAndPassword(auth, email, password);
-                setMessage("Login successful!");
-                setCurrentPage('dashboard'); // Navigate to dashboard after successful login.
-            }
+            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+            const user = userCredential.user;
+            console.log("Auth: User registered:", user.uid);
+
+            // Create user profile in Firestore upon registration as 'employee'.
+            const userRef = doc(db, `artifacts/${appId}/users/${user.uid}/profile`, 'data');
+            await setDoc(userRef, {
+                email: user.email,
+                skills: [],
+                targetRole: '',
+                points: 0,
+                badges: [],
+                userId: user.uid,
+                workflowProgress: 'Profile Loaded',
+                userType: 'employee', // Always 'employee' for registration
+                completedModules: [], // Initialize completedModules
+                inferredSkillVectors: {} // Initialize inferredSkillVectors
+            });
+            console.log("Auth: Profile created for new employee:", user.uid);
+            setMessage("Registration successful! Please log in.");
+            setAuthMode('employeeLogin'); // Switch to employee login after successful registration.
+            console.log("Auth: Registration successful. User needs to login. No immediate redirect.");
         } catch (error) {
-            console.error("Auth error:", error);
-            setMessage(`Authentication failed: ${error.message}`);
+            console.error("Auth: Registration failed:", error);
+            setMessage(`Registration failed: ${error.message}`);
+        }
+    };
+
+    const handleMessageBoxConfirm = () => {
+        console.log("Auth: MessageBox 'OK' clicked. Clearing message.");
+        setMessage(''); // Clear the message to dismiss the box
+        // After message is dismissed, signal to App component to re-evaluate routing
+        if (onAuthSuccessAndMessageDismissed) {
+            console.log("Auth: Calling onAuthSuccessAndMessageDismissed callback.");
+            onAuthSuccessAndMessageDismissed();
         }
     };
 
@@ -270,38 +351,82 @@ const Auth = ({ setCurrentPage }) => {
 
                 {/* Right Section: Login/Register Form */}
                 <div className="lg:w-1/2 p-10 flex flex-col justify-center bg-gray-800">
-                    <h2 className="text-4xl font-extrabold mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
-                        {isRegister ? 'Join Maverick' : 'Welcome Back!'}
-                    </h2>
-                    <Input
-                        label="Email Address"
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="your.email@example.com"
-                        className="mb-6"
-                    />
-                    <Input
-                        label="Password"
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Minimum 6 characters"
-                        className="mb-8"
-                    />
-                    <Button onClick={handleAuth} className="w-full mb-6 text-xl">
-                        {isRegister ? 'Register Account' : 'Sign In'}
-                    </Button>
-                    <p className="text-center text-gray-400 text-md">
-                        {isRegister ? 'Already have an account?' : 'Don\'t have an account?'}{' '}
-                        <span
-                            className="text-blue-400 cursor-pointer hover:underline font-semibold"
-                            onClick={() => setIsRegister(!isRegister)}
-                        >
-                            {isRegister ? 'Login here' : 'Register here'}
-                        </span>
-                    </p>
-                    <MessageBox message={message} onConfirm={() => setMessage('')} />
+                    {authMode === 'choose' && (
+                        <>
+                            <h2 className="text-4xl font-extrabold mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+                                Choose Your Role
+                            </h2>
+                            <Button onClick={() => setAuthMode('employeeLogin')} className="w-full mb-6 text-xl" icon={BriefcaseBusiness}>
+                                Employee Login
+                            </Button>
+                            <Button onClick={() => setAuthMode('adminLogin')} className="w-full text-xl bg-gradient-to-r from-orange-600 to-red-700 hover:from-orange-700 hover:to-red-800" icon={UserCog}>
+                                Admin Login
+                            </Button>
+                        </>
+                    )}
+
+                    {(authMode === 'employeeLogin' || authMode === 'adminLogin' || authMode === 'employeeRegister') && (
+                        <>
+                            <h2 className="text-4xl font-extrabold mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+                                {authMode === 'employeeLogin' ? 'Employee Login' : authMode === 'adminLogin' ? 'Admin Login' : 'Employee Registration'}
+                            </h2>
+                            <Input
+                                label="Email Address"
+                                type="email"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="your.email@example.com"
+                                className="mb-6"
+                            />
+                            <Input
+                                label="Password"
+                                type="password"
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="Minimum 6 characters"
+                                className="mb-8"
+                            />
+
+                            {authMode === 'employeeLogin' && (
+                                <Button onClick={() => handleLogin('employee')} className="w-full mb-6 text-xl">
+                                    Sign In as Employee
+                                </Button>
+                            )}
+                            {authMode === 'adminLogin' && (
+                                <Button onClick={() => handleLogin('admin')} className="w-full mb-6 text-xl bg-gradient-to-r from-orange-600 to-red-700 hover:from-orange-700 hover:to-red-800">
+                                    Sign In as Admin
+                                </Button>
+                            )}
+                            {authMode === 'employeeRegister' && (
+                                <Button onClick={handleRegister} className="w-full mb-6 text-xl">
+                                    Register Employee Account
+                                </Button>
+                            )}
+
+                            {authMode === 'employeeLogin' && (
+                                <p className="text-center text-gray-400 text-md">
+                                    Don't have an account?{' '}
+                                    <span
+                                        className="text-blue-400 cursor-pointer hover:underline font-semibold"
+                                        onClick={() => setAuthMode('employeeRegister')}
+                                    >
+                                        Register here
+                                    </span>
+                                </p>
+                            )}
+                            {(authMode === 'employeeLogin' || authMode === 'adminLogin' || authMode === 'employeeRegister') && (
+                                <p className="text-center text-gray-400 text-md mt-4">
+                                    <span
+                                        className="text-gray-400 cursor-pointer hover:underline font-semibold"
+                                        onClick={() => { setAuthMode('choose'); setEmail(''); setPassword(''); setMessage(''); }}
+                                    >
+                                        Back to Role Selection
+                                    </span>
+                                </p>
+                            )}
+                        </>
+                    )}
+                    <MessageBox message={message} onConfirm={handleMessageBoxConfirm} />
                 </div>
             </div>
         </div>
@@ -310,7 +435,7 @@ const Auth = ({ setCurrentPage }) => {
 
 // Profile Setup Component: Allows users to define their skills and target role.
 const ProfileSetup = ({ setCurrentPage }) => {
-    const { db, userId, isAuthReady, appId, geminiApiKey } = useContext(FirebaseContext);
+    const { db, userId, isAuthReady, appId, geminiApiKey, auth } = useContext(FirebaseContext);
     const [userSkills, setUserSkills] = useState([]); // Now stores array of { name: string, level: number }
     const [targetRole, setTargetRole] = useState('');
     const [resumeFile, setResumeFile] = useState(null); // State for resume PDF file.
@@ -326,22 +451,27 @@ const ProfileSetup = ({ setCurrentPage }) => {
         const fetchUserProfile = async () => {
             if (isAuthReady && userId && db) {
                 setLoading(true);
+                console.log("ProfileSetup: Fetching profile for userId:", userId);
                 try {
                     const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
                     const docSnap = await getDoc(userRef);
                     if (docSnap.exists()) {
                         const data = docSnap.data();
+                        console.log("ProfileSetup: Profile data fetched:", data);
                         // Initialize userSkills with existing data, ensuring it's an array of objects.
                         setUserSkills(data.skills || []);
                         setTargetRole(data.targetRole || '');
+                    } else {
+                        console.log("ProfileSetup: No existing profile found for userId:", userId);
                     }
                 } catch (error) {
-                    console.error("Error fetching user profile:", error);
+                    console.error("ProfileSetup: Error fetching user profile:", error);
                     setMessage("Error loading profile.");
                 } finally {
                     setLoading(false);
                 }
             } else if (isAuthReady && !userId) {
+                console.log("ProfileSetup: Not authenticated, redirecting to auth.");
                 setCurrentPage('auth'); // Redirect if not authenticated.
             }
         };
@@ -401,7 +531,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
             try {
                 jsonResponse = JSON.parse(result.candidates[0].content.parts[0].text);
             } catch (parseError) {
-                console.error("Error parsing JSON response from Gemini API for suggestions:", parseError);
+                console.error("ProfileSetup: Error parsing JSON response from Gemini API for suggestions:", parseError);
                 setMessage("Failed to parse role suggestions from AI. Please try again.");
                 return;
             }
@@ -414,7 +544,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
             }
 
         } catch (error) {
-            console.error("Error getting AI suggestions:", error);
+            console.error("ProfileSetup: Error getting AI suggestions:", error);
             setMessage(`Failed to get AI suggestions: ${error.message}`);
         } finally {
             setLoading(false);
@@ -467,7 +597,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
                 setMessage("Backend extracted no skills from your resume.");
             }
         } catch (error) {
-            console.error("Error extracting skills via backend:", error);
+            console.error("ProfileSetup: Error extracting skills via backend:", error);
             setMessage(`Failed to extract skills: ${error.message}. Ensure your backend server is running.`);
         } finally {
             setLoading(false);
@@ -525,7 +655,9 @@ const ProfileSetup = ({ setCurrentPage }) => {
             }
 
             const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
+            console.log("ProfileSetup: Saving profile for userId:", userId, "with data:", { skills: finalSkills, targetRole: finalTargetRole });
             await setDoc(userRef, {
+                email: auth.currentUser.email, // Ensure email is saved with profile
                 skills: finalSkills, // Save skills as array of objects.
                 targetRole: finalTargetRole,
                 workflowProgress: 'Assessment Pending', // Update workflow stage.
@@ -538,9 +670,10 @@ const ProfileSetup = ({ setCurrentPage }) => {
                 }, {})
             }, { merge: true }); // Use merge to update existing fields without overwriting others.
             setMessage("Profile saved successfully!");
+            console.log("ProfileSetup: Profile saved successfully, navigating to dashboard.");
             setCurrentPage('dashboard'); // Navigate to dashboard after saving.
         } catch (error) {
-            console.error("Error saving profile:", error);
+            console.error("ProfileSetup: Error saving profile:", error);
             setMessage("Error saving profile.");
         } finally {
             setLoading(false);
@@ -548,7 +681,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
     };
 
     if (loading) {
-        return <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-400 text-2xl">Loading profile...</div>;
+        return <LoadingPage message="Loading profile..." />;
     }
 
     return (
@@ -586,7 +719,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
                     <p className="text-gray-400 text-sm mb-4">No skills to rate yet. Extract from resume or add manually below.</p>
                 )}
                 <div className="space-y-4 mb-6 max-h-60 overflow-y-auto p-2 rounded-lg bg-gray-700 border border-gray-600">
-                    {userSkills.map((skill, _index) => ( // Corrected JSX syntax here
+                    {userSkills.map((skill, index) => ( // Corrected JSX syntax here
                         <div key={skill.name} className="flex items-center justify-between bg-gray-600 p-3 rounded-lg shadow-inner">
                             <span className="text-gray-100 font-medium text-lg">{skill.name}</span>
                             <div className="flex items-center gap-2">
@@ -690,6 +823,12 @@ const roleBenchmarks = {
     },
     'Data Scientist': {
         'Python': 5, 'R': 4, 'Statistics': 5, 'Machine Learning': 4, 'SQL': 4, 'Data Visualization': 3
+    },
+    'Project Manager': {
+        'Communication': 5, 'Leadership': 4, 'Agile Methodologies': 4, 'Risk Management': 3, 'Budgeting': 3
+    },
+    'UI/UX Designer': {
+        'Figma': 5, 'User Research': 4, 'Wireframing': 4, 'Prototyping': 4, 'Graphic Design': 3
     }
     // Add more roles and their required skills/proficiency levels (1-5)
 };
@@ -701,33 +840,24 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
     const chartInstanceRef = useRef(null); // To store the Chart.js instance
 
     useEffect(() => {
-        if (!userSkills || !targetRole || !roleBenchmarks[targetRole]) {
+        // Calculate skill gaps whenever userSkills or targetRole changes.
+        if (userSkills && targetRole && roleBenchmarks[targetRole]) {
+            const requiredSkills = roleBenchmarks[targetRole];
+            const gaps = [];
+            const userSkillsMap = new Map(userSkills.map(skill => [skill.name.toLowerCase(), skill.level]));
+
+            for (const skill in requiredSkills) {
+                const requiredProficiency = requiredSkills[skill];
+                const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? userSkillsMap.get(skill.toLowerCase()) : 0;
+                const gapValue = Math.max(0, requiredProficiency - userProficiency);
+                if (gapValue > 0) {
+                    gaps.push({ skill: skill, required: requiredProficiency, user: userProficiency, gap: (gapValue / requiredProficiency) * 100 });
+                }
+            }
+            setSkillGaps(gaps.sort((a, b) => b.gap - a.gap)); // Sort by largest gap first.
+        } else {
             setSkillGaps([]);
-            return;
         }
-
-        const requiredSkills = roleBenchmarks[targetRole];
-        const gaps = [];
-
-        // Convert userSkills array of objects to a map for easier lookup.
-        const userSkillsMap = new Map(userSkills.map(skill => [skill.name.toLowerCase(), skill.level]));
-
-        for (const skill in requiredSkills) {
-            const requiredProficiency = requiredSkills[skill];
-            // Use the actual user's rated proficiency, default to 0 if skill not rated.
-            const userProficiency = userSkillsMap.has(skill.toLowerCase()) ? userSkillsMap.get(skill.toLowerCase()) : 0;
-
-            // Calculate gap: (required - user_proficiency) / required * 100
-            const gapPercentage = Math.max(0, ((requiredProficiency - userProficiency) / requiredProficiency) * 100);
-
-            gaps.push({
-                skill: skill,
-                required: requiredProficiency,
-                user: userProficiency,
-                gap: gapPercentage
-            });
-        }
-        setSkillGaps(gaps);
     }, [userSkills, targetRole]);
 
     useEffect(() => {
@@ -815,7 +945,7 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
                 },
             });
         }
-    }, [skillGaps, userSkills, targetRole]);
+    }, [skillGaps]); // Chart updates when skillGaps changes.
 
     return (
         <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl mb-8 border border-gray-700 transform hover:scale-105 transition-transform duration-300">
@@ -828,8 +958,8 @@ const SkillGapAnalysis = ({ userSkills, targetRole }) => {
                         <canvas ref={chartRef}></canvas>
                     </div>
                     <h4 className="text-xl font-medium mb-4 text-gray-300">Detailed Gaps:</h4>
-                    {skillGaps.map((gap, _index) => (
-                        <ProgressBar key={_index} label={`${gap.skill} Gap`} progress={Math.round(gap.gap)} />
+                    {skillGaps.map((gap, index) => (
+                        <ProgressBar key={index} label={`${gap.skill} Gap`} progress={Math.round(gap.gap)} />
                     ))}
                 </>
             )}
@@ -913,7 +1043,7 @@ const LearningPlatform = ({ userSkills, targetRole, completedModules, showComple
                 setMessage(`Module "${moduleName}" completed! You earned ${pointsAwarded} points.`);
             }
         } catch (error) {
-            console.error("Error updating points:", error);
+            console.error("LearningPlatform: Error updating points:", error);
             setMessage("Failed to update points.");
         }
     };
@@ -968,7 +1098,7 @@ const LearningPlatform = ({ userSkills, targetRole, completedModules, showComple
                     )
                 ) : ( // Display Completed Modules
                     mockCompletedModules.length === 0 ? (
-                        <p className="text-gray-400 text-lg text-center py-4">No completed courses yet. Start learning!</p>
+                        <p className="text-gray-400 text-lg text-center py-4">No courses completed yet. Start learning!</p>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {mockCompletedModules.map((module, index) => (
@@ -1021,18 +1151,19 @@ const Leaderboard = () => {
                             id: userDoc.id,
                             email: data.email || 'N/A',
                             points: data.points || 0,
-                            targetRole: data.targetRole || 'Not Set'
+                            targetRole: data.targetRole || 'Not Set',
+                            userType: data.userType || 'employee' // Include userType
                         });
                     }
                 } catch (error) {
-                    console.error("Error fetching user profile for leaderboard:", error);
+                    console.error("Leaderboard: Error fetching user profile for leaderboard:", error);
                 }
             }
             users.sort((a, b) => b.points - a.points); // Sort by points in descending order.
             setLeaderboardData(users);
             setLoading(false);
         }, (error) => {
-            console.error("Error listening to leaderboard data:", error);
+            console.error("Leaderboard: Error listening to leaderboard data:", error);
             setMessage("Error loading leaderboard.");
             setLoading(false);
         });
@@ -1045,7 +1176,7 @@ const Leaderboard = () => {
             <div className="max-w-6xl mx-auto bg-gray-800 p-8 rounded-3xl shadow-2xl border border-gray-700 transform hover:scale-105 transition-transform duration-300">
                 <h3 className="text-4xl font-extrabold mb-8 text-center text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">Global Leaderboard</h3>
                 {loading ? (
-                    <p className="text-gray-400 text-center text-lg py-4">Loading leaderboard...</p>
+                    <LoadingPage message="Loading leaderboard..." />
                 ) : message ? (
                     <p className="text-red-500 text-center text-lg">{message}</p>
                 ) : leaderboardData.length === 0 ? (
@@ -1058,6 +1189,7 @@ const Leaderboard = () => {
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tl-xl">Rank</th>
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">User ID</th>
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Email</th>
+                                    <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">User Type</th> {/* New column */}
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Target Role</th>
                                     <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tr-xl">Points</th>
                                 </tr>
@@ -1068,6 +1200,7 @@ const Leaderboard = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-100">{index + 1}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 break-all">{user.id}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.email}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 capitalize">{user.userType}</td> {/* Display user type */}
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.targetRole}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-lg text-gray-100 font-extrabold">{user.points}</td>
                                     </tr>
@@ -1091,14 +1224,14 @@ const Assessment = ({ setCurrentPage }) => {
     const [difficulty, setDifficulty] = useState('medium');
     const [quizQuestions, setQuizQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-    const [userAnswers, setUserAnswers] = useState({});
+    const [userAnswers, setUserAnswers] = useState({}); // Corrected to useState
     const [showResults, setShowResults] = useState(false);
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState('');
     const [questionType, setQuestionType] = useState('mcq');
     const [userCode, setUserCode] = useState('');
-    const [codeOutput, setCodeOutput] = useState('');
-    const [testResults, setTestResults] = useState([]);
+    const [codeOutput, setCodeOutput] = useState(''); // Corrected to useState
+    const [testResults, setTestResults] = useState([]); // Corrected to useState
     const [improvementSuggestions, setImprovementSuggestions] = useState([]); // New state for suggestions.
 
     // Fetch user profile on mount or auth state change.
@@ -1108,20 +1241,26 @@ const Assessment = ({ setCurrentPage }) => {
             setLoading(true);
             const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
             unsubscribe = onSnapshot(userRef, (docSnap) => {
+                console.log("Assessment onSnapshot: docSnap exists?", docSnap.exists());
                 if (docSnap.exists()) {
+                    console.log("Assessment onSnapshot: Profile data:", docSnap.data());
                     setUserProfile(docSnap.data());
                 } else {
                     setUserProfile(null);
                     setMessage("Please set up your profile first.");
-                    setCurrentPage('profileSetup');
+                    // Only redirect if not already on profile setup to avoid loop
+                    if (window.location.hash !== '#profileSetup') { // Simple hash check for current page
+                        setCurrentPage('profileSetup');
+                    }
                 }
                 setLoading(false);
             }, (error) => {
-                console.error("Error fetching user profile in Assessment:", error);
+                console.error("Assessment: Error fetching user profile in Assessment:", error);
                 setMessage("Error loading user profile for assessment.");
                 setLoading(false);
             });
         } else if (isAuthReady && !userId) {
+            console.log("Assessment: Not authenticated, redirecting to auth.");
             setCurrentPage('auth');
         }
 
@@ -1243,7 +1382,7 @@ const Assessment = ({ setCurrentPage }) => {
             try {
                 jsonResponse = JSON.parse(result.candidates[0].content.parts[0].text);
             } catch (parseError) {
-                console.error("Error parsing JSON response from Gemini API:", parseError);
+                console.error("Assessment: Error parsing JSON response from Gemini API:", parseError);
                 setMessage("Failed to parse quiz data from Gemini API. It might have returned malformed JSON. Falling back to mock data.");
                 setQuizQuestions(generateMockQuestions(questionType, targetSkillForPrompt));
                 return;
@@ -1274,7 +1413,7 @@ const Assessment = ({ setCurrentPage }) => {
                 setQuizQuestions(generateMockQuestions(questionType, targetSkillForPrompt));
             }
         } catch (error) {
-            console.error("Error generating quiz with Gemini API:", error);
+            console.error("Assessment: Error generating quiz with Gemini API:", error);
             setMessage(`Failed to generate quiz with Gemini API: ${error.message}. Falling back to mock data.`);
             setQuizQuestions(generateMockQuestions(questionType, targetSkillForPrompt));
         } finally {
@@ -1422,7 +1561,7 @@ const Assessment = ({ setCurrentPage }) => {
                 return s;
             });
 
-            // If the assessed skill was not in the profile, add it with an initial level.
+            // If the assessed skill was not in the profile, add it with an new initial level.
             if (!skillFound && assessedSkill !== 'General Skills') {
                 updatedSkills.push({
                     name: assessedSkill,
@@ -1442,7 +1581,7 @@ const Assessment = ({ setCurrentPage }) => {
             await getImprovementSuggestions(assessedSkill, percentage);
 
         } catch (error) {
-            console.error("Error updating workflow progress or skill levels:", error);
+            console.error("Assessment: Error updating workflow progress or skill levels:", error);
             setMessage("Error submitting quiz and updating workflow.");
         }
     };
@@ -1483,7 +1622,7 @@ const Assessment = ({ setCurrentPage }) => {
             try {
                 suggestionsArray = JSON.parse(result.candidates[0].content.parts[0].text);
             } catch (parseError) {
-                console.error("Error parsing JSON response for suggestions:", parseError);
+                console.error("Assessment: Error parsing JSON response for suggestions:", parseError);
                 setImprovementSuggestions(["Could not generate specific suggestions. Focus on core concepts."]);
                 return;
             }
@@ -1494,7 +1633,7 @@ const Assessment = ({ setCurrentPage }) => {
                 setImprovementSuggestions(["No specific improvement suggestions could be generated by AI."]);
             }
         } catch (error) {
-            console.error("Error getting improvement suggestions:", error);
+            console.error("Assessment: Error getting improvement suggestions:", error);
             setImprovementSuggestions([`Failed to get suggestions: ${error.message}.`]);
         } finally {
             setLoading(false);
@@ -1522,12 +1661,7 @@ const Assessment = ({ setCurrentPage }) => {
     const currentQuestion = quizQuestions[currentQuestionIndex];
 
     if (loading || !userProfile) {
-        return (
-            <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-400 text-2xl">
-                {loading ? "Loading assessment..." : "User profile not loaded. Please ensure your profile is set up."}
-                <MessageBox message={message} onConfirm={() => setMessage('')} />
-            </div>
-        );
+        return <LoadingPage message={loading ? "Loading assessment..." : "User profile not loaded. Please ensure your profile is set up."} />;
     }
 
     return (
@@ -1614,10 +1748,10 @@ const Assessment = ({ setCurrentPage }) => {
                                             {testResults.length > 0 ? (
                                                 <div className="space-y-2">
                                                     {testResults.map((res, resIndex) => (
-                                                        <div key={resIndex} className={`p-3 rounded-lg flex items-center gap-2 ${res.passed ? 'bg-green-800/30 text-green-300' : 'bg-red-800/30 text-red-300'}`}>
-                                                            {res.passed ? <CheckCircle size={18} /> : <XCircle size={18} />}
+                                                        <div key={resIndex} className={`p-2 rounded-lg flex items-center gap-2 ${res.passed ? 'bg-green-800/20 text-green-300' : 'bg-red-800/20 text-red-300'}`}>
+                                                            {res.passed ? <CheckCircle size={16} /> : <XCircle size={16} />}
                                                             <span>{res.testCase}</span>
-                                                            <span className="ml-auto">Output: {res.actualOutput}</span>
+                                                            <span className="ml-auto">Actual: {res.actualOutput}</span>
                                                         </div>
                                                     ))}
                                                 </div>
@@ -1724,19 +1858,26 @@ const Dashboard = ({ setCurrentPage }) => {
         if (isAuthReady && userId && db) {
             const userRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
             unsubscribe = onSnapshot(userRef, (docSnap) => {
+                console.log("Dashboard onSnapshot: docSnap exists?", docSnap.exists());
                 if (docSnap.exists()) {
-                    setUserProfile(docSnap.data());
+                    const data = docSnap.data();
+                    console.log("Dashboard onSnapshot: Profile data:", data);
+                    setUserProfile(data);
+                    console.log("Dashboard: userProfile state updated to:", data);
+                    console.log("Dashboard: Current workflowProgress:", data.workflowProgress);
                 } else {
+                    console.log("Dashboard onSnapshot: Profile document does not exist for userId:", userId);
                     setUserProfile(null);
                     setMessage("Please set up your profile.");
                 }
                 setLoading(false);
             }, (error) => {
-                console.error("Error fetching user profile:", error);
+                console.error("Dashboard: Error fetching user profile in Dashboard:", error);
                 setMessage("Error loading user profile.");
                 setLoading(false);
             });
         } else if (isAuthReady && !userId) {
+            console.log("Dashboard: Not authenticated, redirecting to auth.");
             setCurrentPage('auth');
         }
 
@@ -1750,23 +1891,21 @@ const Dashboard = ({ setCurrentPage }) => {
             try {
                 await signOut(auth);
                 setCurrentPage('auth');
+                console.log("User logged out.");
             } catch (error) {
-                console.error("Error logging out:", error);
+                console.error("Dashboard: Error logging out:", error);
                 setMessage("Error logging out.");
             }
         }
     };
 
     if (loading) {
-        return (
-            <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-400 text-2xl">
-                Loading dashboard...
-            </div>
-        );
+        return <LoadingPage message="Loading dashboard..." />;
     }
 
     // If no user profile, prompt to set it up.
     if (!userProfile) {
+        console.log("Dashboard: userProfile is null, showing profile setup prompt.");
         return (
             <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
                 <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl text-center border border-gray-700 transform hover:scale-105 transition-transform duration-300">
@@ -1777,6 +1916,8 @@ const Dashboard = ({ setCurrentPage }) => {
             </div>
         );
     }
+    // ADDED LOG HERE:
+    console.log("Dashboard: Rendering with userProfile:", userProfile);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4 sm:p-6 md:p-8 font-inter text-gray-100">
@@ -1833,41 +1974,301 @@ const Dashboard = ({ setCurrentPage }) => {
     );
 };
 
-// Main App Component: Manages global state and page routing.
-function App() {
-    // currentPage can now accept an object for passing additional state (like showCompletedOnly).
-    const [currentPage, setCurrentPage] = useState({ name: 'auth', props: {} });
+// Admin Dashboard Component (Placeholder)
+const AdminDashboard = ({ setCurrentPage }) => {
+    const { auth, userRole, db, appId, isAuthReady } = useContext(FirebaseContext);
+    const [message, setMessage] = useState('');
+    const [allUsers, setAllUsers] = useState([]);
+    const [loadingUsers, setLoadingUsers] = useState(true);
+
+    useEffect(() => {
+        // Only proceed if Firebase is ready, db is available, and userRole is determined.
+        if (!isAuthReady || !db || userRole === null) {
+            console.log("AdminDashboard useEffect: Not ready or userRole not determined. isAuthReady:", isAuthReady, "db:", !!db, "userRole:", userRole);
+            return;
+        }
+
+        if (userRole !== 'admin') {
+            console.log("AdminDashboard useEffect: User is not admin (userRole:", userRole, "), redirecting to dashboard.");
+            setMessage("Access Denied: You are not authorized to view the admin dashboard.");
+            setCurrentPage('dashboard'); // Redirect non-admins to employee dashboard
+            return;
+        }
+
+        const fetchAllUsers = async () => {
+            setLoadingUsers(true);
+            try {
+                const usersCollectionRef = collection(db, `artifacts/${appId}/users`);
+                const snapshot = await getDocs(usersCollectionRef); // Use getDocs for one-time fetch
+                const usersData = [];
+                for (const userDoc of snapshot.docs) {
+                    const profileDocRef = doc(db, `artifacts/${appId}/users/${userDoc.id}/profile`, 'data');
+                    const profileSnap = await getDoc(profileDocRef);
+                    if (profileSnap.exists()) {
+                        usersData.push({ id: userDoc.id, ...profileSnap.data() });
+                    }
+                }
+                setAllUsers(usersData);
+                console.log("AdminDashboard: All users fetched:", usersData.length);
+            } catch (error) {
+                console.error("AdminDashboard: Error fetching all users for admin dashboard:", error);
+                setMessage("Failed to load user data.");
+            } finally {
+                setLoadingUsers(false);
+            }
+        };
+
+        fetchAllUsers();
+        // You might want to set up an onSnapshot listener here for real-time updates
+        // if the admin dashboard needs to be highly dynamic, but for simplicity,
+        // a one-time fetch on mount is used.
+    }, [db, appId, isAuthReady, userRole, auth, setCurrentPage]); // Added userRole to dependencies
+
+    const handleLogout = async () => {
+        if (auth) {
+            try {
+                await signOut(auth);
+                setCurrentPage('auth');
+                console.log("Admin logged out.");
+            } catch (error) {
+                console.error("AdminDashboard: Error logging out admin:", error);
+                setMessage("Error logging out.");
+            }
+        }
+    };
+
+    if (loadingUsers) {
+        return <LoadingPage message="Loading admin dashboard..." />;
+    }
+
+    // This check is redundant due to the useEffect logic above, but kept for clarity.
+    if (userRole !== 'admin') {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
+                <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl text-center border border-gray-700">
+                    <h2 className="text-3xl font-extrabold text-red-500 mb-4">Access Denied</h2>
+                    <p className="text-gray-300 text-lg mb-6">You do not have administrative privileges to view this page.</p>
+                    <Button onClick={() => setCurrentPage('dashboard')} icon={Home} className="text-lg">Go to Employee Dashboard</Button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4 sm:p-6 md:p-8 font-inter text-gray-100">
+            <div className="max-w-6xl mx-auto">
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-10 p-8 bg-gray-800 rounded-3xl shadow-2xl border border-gray-700 transform hover:scale-105 transition-transform duration-300">
+                    <h1 className="text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-red-500 mb-6 sm:mb-0">
+                        Admin Dashboard
+                    </h1>
+                    <div className="flex flex-wrap justify-center sm:justify-end gap-4">
+                        <Button onClick={handleLogout} icon={LogOut} className="bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-lg">Logout</Button>
+                    </div>
+                </div>
+
+                <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl mb-8 border border-gray-700 transform hover:scale-105 transition-transform duration-300">
+                    <h2 className="text-3xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-500">All Users Overview</h2>
+                    {allUsers.length === 0 ? (
+                        <p className="text-gray-400 text-center text-lg py-4">No users registered yet.</p>
+                    ) : (
+                        <div className="overflow-x-auto rounded-xl border border-gray-700 shadow-inner">
+                            <table className="min-w-full divide-y divide-gray-700">
+                                <thead className="bg-gray-700">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tl-xl">Email</th>
+                                        <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">User Type</th>
+                                        <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Target Role</th>
+                                        <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Points</th>
+                                        <th scope="col" className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider rounded-tr-xl">Workflow Progress</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-gray-800 divide-y divide-gray-700">
+                                    {allUsers.map((user) => (
+                                        <tr key={user.id} className="bg-gray-800 hover:bg-gray-700 transition duration-150">
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-100">{user.email}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 capitalize">{user.userType}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.targetRole || 'Not Set'}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.points || 0}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{user.workflowProgress || 'N/A'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+                <MessageBox message={message} onConfirm={() => setMessage('')} />
+            </div>
+        </div>
+    );
+};
+
+
+// Loading Page Component
+const LoadingPage = ({ message = "Loading..." }) => (
+    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-gray-400 text-2xl">
+        <div className="flex flex-col items-center">
+            <svg className="animate-spin h-10 w-10 text-blue-500 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p>{message}</p>
+        </div>
+    </div>
+);
+
+
+// The main App component that handles routing and overall application flow.
+const App = () => {
+    const { userId, isAuthReady, db, appId, userRole, auth } = useContext(FirebaseContext);
+    const [currentPage, setCurrentPage] = useState('loading'); // Start with loading
+    const [pageProps, setPageProps] = useState({}); // To pass additional props to pages
+
+    // This callback is specifically for when Auth component signals a successful login
+    // AND the message box is dismissed.
+    const handleAuthSuccessAndMessageDismissed = useCallback(async () => {
+        console.log("App: handleAuthSuccessAndMessageDismissed called. Re-evaluating route.");
+        // Re-evaluate the route based on current auth state and user role
+        // This is crucial because userRole might have just been set by FirebaseProvider
+        // after the login.
+        if (userId && userRole) { // Ensure userId and userRole are available
+            try {
+                const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
+                const docSnap = await getDoc(userProfileRef);
+
+                if (docSnap.exists()) {
+                    const profileData = docSnap.data();
+                    if (profileData.userType === 'admin') {
+                        setCurrentPage('adminDashboard');
+                        console.log("App: Redirecting to adminDashboard after auth success and message dismissed.");
+                    } else { // employee
+                        // Check if profile is complete, otherwise go to profile setup
+                        if (profileData.targetRole && profileData.skills && profileData.skills.length > 0) {
+                             setCurrentPage('dashboard');
+                             console.log("App: Redirecting to dashboard after auth success and message dismissed (profile complete).");
+                        } else {
+                             setCurrentPage('profileSetup');
+                             console.log("App: Redirecting to profileSetup after auth success and message dismissed (profile incomplete).");
+                        }
+                    }
+                } else {
+                    // This case should ideally not happen if login was successful, but as a fallback
+                    setCurrentPage('profileSetup');
+                    console.log("App: Redirecting to profileSetup after auth success and message dismissed (no profile found).");
+                }
+            } catch (error) {
+                console.error("App: Error during post-auth routing:", error);
+                setCurrentPage('auth'); // Fallback to auth on error
+            }
+        } else {
+            // If userId or userRole are still null, it means the auth state change hasn't propagated fully
+            // or the user was logged out (e.g., role mismatch). Stay on auth page.
+            setCurrentPage('auth');
+            console.log("App: userId or userRole not ready after message dismissed. Staying on auth.");
+        }
+    }, [userId, userRole, db, appId]); // Depend on relevant states
+
+    // Initial routing logic when the App component mounts or dependencies change
+    useEffect(() => {
+        console.log("App useEffect (initial routing): isAuthReady:", isAuthReady, "userId:", userId, "userRole:", userRole);
+
+        if (!isAuthReady) {
+            setCurrentPage('loading');
+            return;
+        }
+
+        if (!userId) {
+            console.log("App useEffect: No user ID, setting page to auth.");
+            setCurrentPage('auth');
+            return;
+        }
+
+        if (userRole === null) {
+            console.log("App useEffect: User ID present, but userRole is null. Waiting for role.");
+            setCurrentPage('loading'); // Keep loading until role is fetched
+            return;
+        }
+
+        // Now that userId and userRole are known, determine the page
+        const determinePage = async () => {
+            try {
+                const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/profile`, 'data');
+                const docSnap = await getDoc(userProfileRef);
+
+                if (userRole === 'admin') {
+                    // Defensive check for auto-logged in admin not explicitly going to admin dashboard
+                    if (!docSnap.exists() || docSnap.data().userType !== 'admin') {
+                        console.warn("App useEffect: Auto-logged in user is not a registered admin. Forcing logout.");
+                        await signOut(auth);
+                        setCurrentPage('auth');
+                        return;
+                    }
+                    console.log("App useEffect: User is admin, setting page to adminDashboard.");
+                    setCurrentPage('adminDashboard');
+                } else { // employee
+                    if (docSnap.exists() && docSnap.data().targetRole && docSnap.data().skills && docSnap.data().skills.length > 0) {
+                        console.log("App useEffect: Employee profile complete, setting page to dashboard.");
+                        setCurrentPage('dashboard');
+                    } else {
+                        console.log("App useEffect: Employee profile incomplete or not found, setting page to profileSetup.");
+                        setCurrentPage('profileSetup');
+                    }
+                }
+            } catch (error) {
+                console.error("App useEffect: Error determining initial page:", error);
+                setCurrentPage('auth'); // Fallback on error
+            }
+        };
+
+        // Only run determination if we are currently in a loading or auth state
+        // and all necessary auth/role info is available.
+        if (currentPage === 'loading' || currentPage === 'auth') {
+            determinePage();
+        }
+
+    }, [isAuthReady, userId, userRole, db, appId, auth]); // Dependencies for initial routing
+
+    // Function to change page, potentially with props
+    const navigateTo = (page, props = {}) => {
+        console.log(`App: navigateTo called. Setting currentPage to ${page} with props:`, props);
+        setCurrentPage(page);
+        setPageProps(props);
+    };
 
     const renderPage = () => {
-        switch (currentPage.name) {
+        switch (currentPage) {
+            case 'loading':
+                return <LoadingPage message="Initializing application..." />; // Use LoadingPage component
             case 'auth':
-                return <Auth setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+                return <Auth setCurrentPage={navigateTo} onAuthSuccessAndMessageDismissed={handleAuthSuccessAndMessageDismissed} />;
             case 'profileSetup':
-                return <ProfileSetup setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+                return <ProfileSetup setCurrentPage={navigateTo} />;
             case 'dashboard':
-                return <Dashboard setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
-            case 'leaderboard':
-                return <Leaderboard setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+                return <Dashboard setCurrentPage={navigateTo} />;
+            case 'adminDashboard':
+                return <AdminDashboard setCurrentPage={navigateTo} />;
             case 'assessment':
-                return <Assessment setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+                return <Assessment setCurrentPage={navigateTo} />;
             case 'learningPlatform':
-                return <LearningPlatform {...currentPage.props} />; // Pass props to LearningPlatform.
+                return <LearningPlatform setCurrentPage={navigateTo} {...pageProps} />;
+            case 'leaderboard':
+                return <Leaderboard setCurrentPage={navigateTo} />;
             default:
-                return <Auth setCurrentPage={(name, props = {}) => setCurrentPage({ name, props })} />;
+                return (
+                    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 text-red-400 text-2xl">
+                        404: Page Not Found
+                        <Button onClick={() => navigateTo('dashboard')} className="mt-4">Go to Dashboard</Button>
+                    </div>
+                );
         }
     };
 
     return (
-        <FirebaseProvider>
-            {/* The styling is purely via Tailwind classes. */}
-            {/* IMPORTANT: Tailwind CSS CDN and Inter font MUST be included in public/index.html */}
-            {/* IMPORTANT: Global styles for html, body, body, and #root MUST be in public/index.html */}
-            <div className="font-inter antialiased">
-                {renderPage()}
-            </div>
-        </FirebaseProvider>
+        <div className="min-h-screen bg-gray-950 font-inter">
+            {renderPage()}
+        </div>
     );
-} 
+};
 
+// Default export the main App component
 export default App;
-
