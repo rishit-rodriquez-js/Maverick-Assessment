@@ -14,10 +14,9 @@ import { useFirebase } from './hooks/useFirebaseHook.jsx';
 // Handles user registration and login.
 const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
     const { auth, db, isAuthReady, userId, userRole, appId } = useFirebase();
-    // Changed initial state to show role selection first, and treat it as a registration flow initially
-    const [isRegistering, setIsRegistering] = useState(true); // Start as registering to show role selection
-    const [showRoleSelection, setShowRoleSelection] = useState(true); // Show role selection by default
-    const [selectedRegistrationRole, setSelectedRegistrationRole] = useState(null); // Stores chosen role for registration
+    // Changed initial state to default to login, no initial role selection
+    const [isRegistering, setIsRegistering] = useState(false); // Start as logging in
+    const [isAdminLoginFlow, setIsAdminLoginFlow] = useState(false); // New state to track if admin login button was clicked
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -25,28 +24,8 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
     const [messageType, setMessageType] = useState('info');
     const [showMessageBox, setShowMessageBox] = useState(false);
 
-    useEffect(() => {
-        console.log("Auth Component useEffect: isAuthReady:", isAuthReady, "userId:", userId, "userRole:", userRole);
-        if (isAuthReady) {
-            if (userId) {
-                if (userRole === 'admin') {
-                    console.log("Auth Component useEffect: User is admin, navigating to adminDashboard.");
-                    setCurrentPage('adminDashboard');
-                } else if (userRole === 'employee') {
-                    console.log("Auth Component useEffect: User is employee, navigating to dashboard.");
-                    setCurrentPage('dashboard');
-                } else if (userRole === null) {
-                    // This means user is authenticated but profile data (userType) is not yet set
-                    console.log("Auth Component useEffect: User authenticated but role not set, navigating to profileSetup.");
-                    setCurrentPage('profileSetup');
-                }
-            } else {
-                console.log("Auth Component useEffect: No userId, staying on auth page.");
-                // Ensure we are indeed on the auth page if no user is logged in
-                setCurrentPage('auth');
-            }
-        }
-    }, [isAuthReady, userId, userRole, setCurrentPage]);
+    // The useEffect that was here, responsible for navigation in Auth component, was already removed.
+    // Now, removing the conditional return block as well.
 
     const handleAuthAction = async (e) => {
         e.preventDefault();
@@ -62,24 +41,23 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
 
         try {
             if (isRegistering) {
+                // Employee Registration Flow
                 if (password !== confirmPassword) {
                     setMessage('Passwords do not match.');
                     setMessageType('error');
                     setShowMessageBox(true);
                     return;
                 }
-                // Use selectedRegistrationRole, default to 'employee' if somehow not set (shouldn't happen with new flow)
-                const roleToAssign = selectedRegistrationRole || 'employee';
-
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
-                console.log("Auth Component: User registered:", user.uid, "with role:", roleToAssign);
-                
+                console.log("Auth Component: User registered:", user.uid, "with role: employee");
+
+                // Set userType as 'employee' for new registrations
                 const userDocRef = doc(db, `artifacts/${appId}/users/${user.uid}/profile/data`);
                 await setDoc(userDocRef, {
                     email: user.email,
                     createdAt: new Date(),
-                    userType: roleToAssign, // Use the selected role
+                    userType: 'employee', // Always 'employee' for new registrations
                     targetRole: '',
                     skills: [],
                     completedModules: [],
@@ -90,8 +68,9 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
                 setMessageType('success');
                 setShowMessageBox(true);
             } else {
+                // Login Flow (Employee or Admin)
                 await signInWithEmailAndPassword(auth, email, password);
-                // Navigation handled by the useEffect after auth state changes and role is fetched
+                // After successful login, the App component's useEffect will detect the userId/userRole change and navigate.
             }
         } catch (error) {
             console.error("Auth error:", error);
@@ -104,17 +83,16 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
     const handleMessageBoxConfirm = () => {
         setShowMessageBox(false);
         if (messageType === 'success' && isRegistering) {
-            onAuthSuccessAndMessageDismissed(); // Call the callback after message dismissed
-            setCurrentPage('profileSetup');
+            // This callback is specifically for new registrations to move to profile setup
+            onAuthSuccessAndMessageDismissed();
         }
-        // For login, useEffect handles navigation after auth state changes
+        // For login, the App component's useEffect handles navigation after auth state changes
     };
 
     // Toggle between login and register modes
-    const toggleRegistering = () => {
-        setIsRegistering(prev => !prev);
-        setShowRoleSelection(prev => !prev); // Toggle role selection visibility
-        setSelectedRegistrationRole(null); // Reset selected role
+    const toggleAuthMode = (mode) => {
+        setIsRegistering(mode === 'register');
+        setIsAdminLoginFlow(false); // Reset admin flow when toggling modes
         setEmail('');
         setPassword('');
         setConfirmPassword('');
@@ -122,19 +100,20 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
         setShowMessageBox(false);
     };
 
-    // Handle role selection for registration
-    const handleRoleSelect = (role) => {
-        setSelectedRegistrationRole(role);
-        setIsRegistering(true); // Ensure isRegistering is true when a role is selected
-        setShowRoleSelection(false); // Hide role selection and show email/password form
+    const handleAdminLoginClick = () => {
+        setIsRegistering(false); // Ensure we are in login mode
+        setIsAdminLoginFlow(true); // Activate admin login flow
+        setEmail('');
+        setPassword('');
+        setConfirmPassword('');
+        setMessage('');
+        setShowMessageBox(false);
     };
 
-    // This return is intentional for early exit during authentication status check.
-    // ESLint might flag the code below this as "unreachable", but it is reachable
-    // when the conditions for this 'if' statement are not met.
-    if (!isAuthReady || (isAuthReady && userId && userRole)) {
-        return <LoadingPage message="Checking authentication status..." />;
-    }
+    // REMOVED THE FOLLOWING BLOCK:
+    // if (!isAuthReady || (isAuthReady && userId && userRole)) {
+    //     return <LoadingPage message="Checking authentication status..." />;
+    // }
 
     return (
         <div className="min-h-screen flex flex-col md:flex-row items-center justify-center bg-gradient-to-br from-gray-950 via-gray-900 to-gray-950 p-4">
@@ -157,81 +136,80 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
             {/* Right Section: Auth Form */}
             <div className="w-full md:w-1/2 bg-gray-800 p-8 rounded-xl shadow-2xl border border-gray-700 flex flex-col justify-center items-center">
                 <h2 className="text-3xl font-bold text-white text-center mb-8">
-                    {isRegistering && showRoleSelection ? 'Choose Your Role' : (isRegistering ? 'Register' : 'Login')}
+                    {isRegistering ? 'Register as Employee' : (isAdminLoginFlow ? 'Login as Admin' : 'Login as Employee')}
                 </h2>
 
-                {isRegistering && showRoleSelection ? (
-                    // Step 1: Role selection for registration
-                    <div className="space-y-6 w-full max-w-sm">
-                        <p className="text-gray-300 text-center text-lg mb-4">How would you like to register?</p>
-                        <Button
-                            onClick={() => handleRoleSelect('employee')}
-                            className="w-full bg-blue-600 hover:bg-blue-700"
-                        >
-                            Register as Employee
-                        </Button>
-                        <Button
-                            onClick={() => handleRoleSelect('admin')}
-                            className="w-full bg-purple-600 hover:bg-purple-700"
-                        >
-                            Register as Admin
-                        </Button>
-                        <p className="text-center text-gray-400 mt-6">
-                            Already have an account?
-                            <button
-                                onClick={toggleRegistering}
-                                className="text-blue-400 hover:text-blue-300 font-medium ml-2 focus:outline-none"
-                            >
-                                Login here
-                            </button>
-                        </p>
-                    </div>
-                ) : (
-                    // Step 2: Email/password form (for both login and after role selection for registration)
-                    <form onSubmit={handleAuthAction} className="space-y-6 w-full max-w-sm">
+                <form onSubmit={handleAuthAction} className="space-y-6 w-full max-w-sm">
+                    <Input
+                        id="email"
+                        label="Email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="your@example.com"
+                        required
+                    />
+                    <Input
+                        id="password"
+                        label="Password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        required
+                    />
+                    {isRegistering && (
                         <Input
-                            id="email"
-                            label="Email"
-                            type="email"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="your@example.com"
-                            required
-                        />
-                        <Input
-                            id="password"
-                            label="Password"
+                            id="confirmPassword"
+                            label="Confirm Password"
                             type="password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
                             placeholder="••••••••"
                             required
                         />
-                        {isRegistering && (
-                            <Input
-                                id="confirmPassword"
-                                label="Confirm Password"
-                                type="password"
-                                value={confirmPassword}
-                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                placeholder="••••••••"
-                                required
-                            />
+                    )}
+                    <Button type="submit" className="w-full">
+                        {isRegistering ? 'Register' : 'Login'}
+                    </Button>
+
+                    <div className="text-center text-gray-400 mt-6">
+                        {isRegistering ? (
+                            <>
+                                Already have an account?
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAuthMode('login')}
+                                    className="text-blue-400 hover:text-blue-300 font-medium ml-2 focus:outline-none"
+                                >
+                                    Login here
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                Don't have an employee account?
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAuthMode('register')}
+                                    className="text-blue-400 hover:text-blue-300 font-medium ml-2 focus:outline-none"
+                                >
+                                    Register as Employee
+                                </button>
+                            </>
                         )}
-                        <Button type="submit" className="w-full">
-                            {isRegistering ? `Register as ${selectedRegistrationRole || 'Employee'}` : 'Login'}
-                        </Button>
-                        <p className="text-center text-gray-400 mt-6">
-                            {isRegistering ? 'Already have an account?' : 'Don\'t have an account?'}
-                            <button
-                                onClick={toggleRegistering}
-                                className="text-blue-400 hover:text-blue-300 font-medium ml-2 focus:outline-none"
+                    </div>
+                    {!isRegistering && ( // Only show "Login as Admin" when not registering
+                        <div className="text-center mt-4">
+                            <Button
+                                type="button"
+                                onClick={handleAdminLoginClick}
+                                className="w-full bg-purple-600 hover:bg-purple-700"
                             >
-                                {isRegistering ? 'Login here' : 'Register here'}
-                            </button>
-                        </p>
-                    </form>
-                )}
+                                Login as Admin
+                            </Button>
+                        </div>
+                    )}
+                </form>
             </div>
             {showMessageBox && (
                 <MessageBox
@@ -248,7 +226,7 @@ const Auth = ({ setCurrentPage, onAuthSuccessAndMessageDismissed }) => {
 // Allows users to set up their profile information.
 const ProfileSetup = ({ setCurrentPage }) => {
     const { userId, db, isAuthReady, geminiApiKey, appId } = useFirebase();
-    const [userType, setUserType] = useState('employee');
+    const [userType, setUserType] = useState('employee'); // Default to employee
     const [targetRole, setTargetRole] = useState('');
     const [skills, setSkills] = useState([{ name: '', level: 0 }]); // Skills now have a level 0-5
     const [message, setMessage] = useState('');
@@ -266,7 +244,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
             const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    setUserType(data.userType || 'employee');
+                    setUserType(data.userType || 'employee'); // Keep existing userType
                     setTargetRole(data.targetRole || '');
                     // Ensure skills are in the new format, or default
                     setSkills(data.skills && data.skills.length > 0 ? data.skills : [{ name: '', level: 0 }]);
@@ -315,7 +293,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
             const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile/data`);
             // Changed from updateDoc to setDoc with merge: true to handle document creation if it doesn't exist
             await setDoc(userDocRef, {
-                userType,
+                userType, // Preserve userType from initial registration or existing profile
                 targetRole,
                 skills: skills.filter(s => s.name.trim() !== ''), // Only save skills with names
                 updatedAt: new Date(),
@@ -324,7 +302,12 @@ const ProfileSetup = ({ setCurrentPage }) => {
             setMessage('Profile updated successfully!');
             setMessageType('success');
             setShowMessageBox(true);
-            setCurrentPage('dashboard'); // Redirect to dashboard after setup
+            // Redirect based on userType after profile setup
+            if (userType === 'admin') {
+                setCurrentPage('adminDashboard');
+            } else {
+                setCurrentPage('dashboard');
+            }
         } catch (error) {
                 console.error("Error updating profile:", error);
                 setMessage(`Failed to update profile: ${error.message}`);
@@ -509,16 +492,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
             <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-gray-700">
                 <h2 className="text-3xl font-bold text-white text-center mb-8">Set Up Your Profile</h2>
                 <form onSubmit={handleSubmit} className="space-y-6">
-                    <Select
-                        id="userType"
-                        label="I am a:"
-                        value={userType}
-                        onChange={(e) => setUserType(e.target.value)}
-                        options={[
-                            { value: 'employee', label: 'Employee' },
-                            { value: 'admin', label: 'Admin' }
-                        ]}
-                    />
+                    {/* UserType selection removed, as it's now set during registration/admin promotion */}
                     <Input
                         id="targetRole"
                         label="My Target Role/Job Title:"
@@ -601,7 +575,7 @@ const ProfileSetup = ({ setCurrentPage }) => {
                                     type="number"
                                     label="Level"
                                     value={skill.level}
-                                    onChange={(e) => handleSkillChange(index, 'level', e.target.value)}
+                                    onChange={(e) => handleSkillChange(index, 'level', parseInt(e.target.value))}
                                     min="0"
                                     max="5"
                                     className="w-20 text-center"
@@ -2727,12 +2701,12 @@ const App = () => {
     const handleAuthSuccessAndMessageDismissed = useCallback(() => {
         // This callback is triggered when Auth page successfully authenticates
         // and its message box is dismissed.
-        // The useEffect in Auth component will handle navigation based on userRole.
+        // The useEffect in App component will handle navigation based on userRole.
         // No direct navigation here to avoid race conditions with role fetching.
     }, []);
 
     useEffect(() => {
-        console.log("App Component useEffect: isAuthReady:", isAuthReady, "userId:", userId, "userRole:", userRole);
+        console.log("App Component useEffect: isAuthReady:", isAuthReady, "userId:", userId, "userRole:", userRole, "currentPage:", currentPage);
         if (isAuthReady) {
             if (userId) {
                 const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile/data`);
@@ -2741,27 +2715,40 @@ const App = () => {
                         const data = docSnap.data();
                         console.log("App Component useEffect: User profile exists. Role:", data.userType);
                         if (data.userType === 'admin') {
-                            setCurrentPage('adminDashboard');
+                            if (currentPage !== 'adminDashboard') { // Prevent redundant updates
+                                setCurrentPage('adminDashboard');
+                            }
                         } else if (data.userType === 'employee') {
-                            setCurrentPage('dashboard');
+                            if (currentPage !== 'dashboard') { // Prevent redundant updates
+                                setCurrentPage('dashboard');
+                            }
                         } else {
-                            setCurrentPage('profileSetup');
+                            // If userType is not explicitly 'admin' or 'employee' (e.g., new user)
+                            if (currentPage !== 'profileSetup') { // Prevent redundant updates
+                                setCurrentPage('profileSetup');
+                            }
                         }
                     } else {
                         console.log("App Component useEffect: User profile does NOT exist, navigating to profileSetup.");
-                        setCurrentPage('profileSetup');
+                        if (currentPage !== 'profileSetup') { // Prevent redundant updates
+                            setCurrentPage('profileSetup');
+                        }
                     }
                 }, (error) => {
                     console.error("App Component useEffect: Error fetching user role on app load:", error);
-                    setCurrentPage('profileSetup'); // Fallback
+                    if (currentPage !== 'profileSetup') { // Fallback, prevent redundant updates
+                        setCurrentPage('profileSetup');
+                    }
                 });
                 return () => unsubscribe();
             } else {
                 console.log("App Component useEffect: No userId, navigating to auth.");
-                setCurrentPage('auth');
+                if (currentPage !== 'auth') { // Prevent redundant updates
+                    setCurrentPage('auth');
+                }
             }
         }
-    }, [isAuthReady, userId, db, userRole, appId]); // Added userRole and appId to dependencies
+    }, [isAuthReady, userId, userRole, db, appId, currentPage]); // Added currentPage to dependencies
 
     // Function to navigate between pages
     const navigateTo = (page, props = {}) => {
